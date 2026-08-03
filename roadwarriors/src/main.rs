@@ -2,31 +2,19 @@ mod awg;
 mod handshake;
 mod reconcile;
 
+use anyhow::Context as _;
 use common::mesh_types::RoadWarrior;
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Secret;
 use kube::runtime::Controller;
 use kube::runtime::watcher::Config;
 use kube::{Api, Client, ResourceExt};
-use roadwarriors::ROADWARRIORS_KEY_SECRET;
+use roadwarriors::{ROADWARRIORS_KEY_SECRET, RoadWarriorConfig};
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 const ROADWARRIORS_KEY_FIELD: &str = "privateKey";
-
-/// Parses an optional numeric env var, panicking (not silently ignoring) on a value that's set
-/// but unparseable - a typo'd obfuscation param should fail loudly at startup, not silently fall
-/// back to "unset".
-fn env_opt<T: std::str::FromStr>(key: &str) -> Option<T>
-where
-    T::Err: std::fmt::Debug,
-{
-    env::var(key).ok().map(|v| {
-        v.parse()
-            .unwrap_or_else(|e| panic!("{key} must parse: {e:?}"))
-    })
-}
 
 /// Reads the shared `roadwarriors` interface's private key from a Secret - identical across every
 /// node (unlike mesh's per-node keys), so every DaemonSet pod reads/writes the same single entry.
@@ -80,19 +68,18 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Device-level AmneziaWG obfuscation - one shared config for the whole interface (see
-    // `awg.rs`'s module doc). Unset by default, keeping the interface wire-compatible with
-    // ordinary WireGuard clients.
-    let obfuscation = common::mesh_types::Obfuscation {
-        jc: env_opt("ROADWARRIORS_OBFUSCATION_JC"),
-        jmin: env_opt("ROADWARRIORS_OBFUSCATION_JMIN"),
-        jmax: env_opt("ROADWARRIORS_OBFUSCATION_JMAX"),
-        s1: env_opt("ROADWARRIORS_OBFUSCATION_S1"),
-        s2: env_opt("ROADWARRIORS_OBFUSCATION_S2"),
-        h1: env_opt("ROADWARRIORS_OBFUSCATION_H1"),
-        h2: env_opt("ROADWARRIORS_OBFUSCATION_H2"),
-        h3: env_opt("ROADWARRIORS_OBFUSCATION_H3"),
-        h4: env_opt("ROADWARRIORS_OBFUSCATION_H4"),
-    };
+    // `awg.rs`'s module doc). One-shot at startup, not watched - changing it requires a pod
+    // restart, same as before when this was a set of env vars. Empty/no RoadWarriorConfig object
+    // is a valid, meaningful state, keeping the interface wire-compatible with ordinary WireGuard
+    // clients - see `obfuscation_from_configs`.
+    let roadwarriorconfigs: Api<RoadWarriorConfig> = Api::namespaced(client.clone(), &namespace);
+    let obfuscation = roadwarriors::obfuscation_from_configs(
+        &roadwarriorconfigs
+            .list(&Default::default())
+            .await
+            .context("failed to list RoadWarriorConfig objects")?
+            .items,
+    )?;
 
     tracing::info!(
         node_name, iface, %address_cidr, listen_port, stale_secs,

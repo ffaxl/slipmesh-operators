@@ -5,7 +5,7 @@
 use common::mesh_types::RoadWarrior;
 use common::rbacgen::{named_rule_for, rule_for, status_rule_for};
 use k8s_openapi::api::core::v1::Secret;
-use roadwarriors::ROADWARRIORS_KEY_SECRET;
+use roadwarriors::{ROADWARRIORS_KEY_SECRET, RoadWarriorConfig};
 
 fn main() {
     common::rbacgen::print_rules(&[
@@ -22,5 +22,7 @@ fn main() {
         // PublicKeyConflict/AllowedIpsRoutable conditions, plus connectedNode/lastHandshakeTime
         // from handshake.rs's 1Hz poll loop.
         status_rule_for::<RoadWarrior>(&["patch"]),
+        // One-shot at startup - see obfuscation_from_configs.
+        rule_for::<RoadWarriorConfig>(&["list"]),
     ]);
 }
