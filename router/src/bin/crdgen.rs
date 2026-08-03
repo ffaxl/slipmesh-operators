@@ -12,5 +12,6 @@ fn main() {
         types::RouterNode::crd(),
         types::BypassSource::crd(),
         types::RouterPool::crd(),
+        types::RouterConfig::crd(),
     ]);
 }

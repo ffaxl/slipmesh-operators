@@ -84,6 +84,32 @@ pub struct RouterNodeStatus {
     pub loopback: Option<std::net::Ipv4Addr>,
 }
 
+/// Cluster-wide router settings shared identically by every node - unlike `RouterNode` (per-node
+/// identity) or `RouterPool` (multiple instances meaningful, e.g. to add capacity), exactly one
+/// `RouterConfig` object is expected per namespace. No status/reconcile loop: `router` reads this
+/// once at startup (see `main.rs`), the same one-shot-list pattern already used for the cluster's
+/// `ServiceCIDR`/this node's own `podCIDR`.
+#[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[kube(
+    group = "slipmesh.net",
+    version = "v1alpha1",
+    kind = "RouterConfig",
+    plural = "routerconfigs",
+    shortname = "rcfg",
+    namespaced,
+    printcolumn = r#"{"name":"BgpAs", "type":"integer", "jsonPath":".spec.bgpAs"}"#
+)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterConfigSpec {
+    /// AS number shared by the full iBGP mesh - every node's rendered BIRD config uses this same
+    /// value for its local `protocol bgp ibgp_<label> { local as <bgp_as>; ... }` block. Was
+    /// previously the `ROUTER_BGP_AS` env var (default 64512, a private-use AS) - moved to this
+    /// CRD so changing it doesn't require rebuilding/re-templating every node's Deployment spec.
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(max = 4_294_967_295u32))]
+    pub bgp_as: u32,
+}
+
 /// One bypass-prefix source, resolved into concrete CIDRs by `resolver.rs`: `asn` via
 /// `whois -h whois.radb.net -i origin ASxxxx`, `literal` verbatim, `geoip` via RIPEstat's
 /// country-resource-list.

@@ -21,7 +21,26 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use types::{BypassSource, RouterNode};
+use types::{BypassSource, RouterConfig, RouterNode};
+
+/// Extracts the single cluster-wide BGP AS number from every `RouterConfig` object in the
+/// namespace. Exactly one is expected: zero means nothing has been configured yet (fail loudly at
+/// startup rather than silently falling back to some baked-in default - a typo'd/missing config
+/// should be obvious, not silently wrong for the whole mesh); more than one is ambiguous, since
+/// nothing here decides which one's value every node should actually use.
+fn bgp_as_from_configs(configs: &[RouterConfig]) -> anyhow::Result<u32> {
+    match configs {
+        [] => anyhow::bail!(
+            "no RouterConfig object found - exactly one is required (e.g. spec.bgpAs: 64512)"
+        ),
+        [only] => Ok(only.spec.bgp_as),
+        _ => anyhow::bail!(
+            "expected exactly one RouterConfig object, found {} - ambiguous, don't know which \
+             one's bgpAs the whole mesh should use",
+            configs.len()
+        ),
+    }
+}
 
 /// Watches `api` in the background for the lifetime of the process, both keeping `writer`'s
 /// `Store` live-updated *and* calling `render(&ctx)` on every event - independent of the
@@ -71,10 +90,6 @@ async fn main() -> anyhow::Result<()> {
     let node_name = env::var("NODE_NAME").expect("NODE_NAME env var must be set (downward API)");
     let namespace =
         env::var("POD_NAMESPACE").expect("POD_NAMESPACE env var must be set (downward API)");
-    let bgp_as: u32 = env::var("ROUTER_BGP_AS")
-        .unwrap_or_else(|_| "64512".to_string())
-        .parse()
-        .expect("ROUTER_BGP_AS must be a u32");
     let bird_conf_path = PathBuf::from(
         env::var("BIRD_CONF_PATH").unwrap_or_else(|_| "/etc/bird/bird.conf".to_string()),
     );
@@ -90,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
         Err(_) => reconcile::DEFAULT_BYPASS_REFRESH_INTERVAL,
     };
 
-    tracing::info!(node_name, bgp_as, bypass_refresh_interval = ?bypass_refresh_interval, "starting router");
+    tracing::info!(node_name, bypass_refresh_interval = ?bypass_refresh_interval, "starting router");
 
     let rt = common::netlink::rt::RtClient::connect()?;
 
@@ -106,6 +121,18 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let client = Client::try_default().await?;
+
+    // One-shot startup, same as ServiceCIDR/podCIDR below - the CRD isn't watched, so changing
+    // spec.bgpAs requires a pod restart to take effect, matching the env var it replaced.
+    let routerconfigs: Api<RouterConfig> = Api::namespaced(client.clone(), &namespace);
+    let bgp_as = bgp_as_from_configs(
+        &routerconfigs
+            .list(&Default::default())
+            .await
+            .context("failed to list RouterConfig objects")?
+            .items,
+    )?;
+    tracing::info!(bgp_as, "BGP AS discovered from RouterConfig");
 
     // One-shot startup: this node's own PodCIDR and the cluster's ServiceCIDR are both immutable
     // once set, so there's nothing to watch/react to here.
@@ -242,4 +269,29 @@ async fn main() -> anyhow::Result<()> {
         .context("router Controller task panicked")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod bgp_as_from_configs_tests {
+    use super::*;
+    use types::RouterConfigSpec;
+
+    fn config(bgp_as: u32) -> RouterConfig {
+        RouterConfig::new("cluster", RouterConfigSpec { bgp_as })
+    }
+
+    #[test]
+    fn no_configs_is_an_error() {
+        assert!(bgp_as_from_configs(&[]).is_err());
+    }
+
+    #[test]
+    fn exactly_one_config_returns_its_bgp_as() {
+        assert_eq!(bgp_as_from_configs(&[config(65010)]).unwrap(), 65010);
+    }
+
+    #[test]
+    fn more_than_one_config_is_ambiguous_and_an_error() {
+        assert!(bgp_as_from_configs(&[config(65010), config(65020)]).is_err());
+    }
 }
