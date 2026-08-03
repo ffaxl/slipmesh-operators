@@ -53,7 +53,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # RUSTSEC advisory-db check against Cargo.lock - dependency CVEs/unmaintained-crate
-      # warnings, not our own code.
-      - uses: rustsec/audit-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # warnings, not our own code. Plain `cargo audit` rather than the rustsec/audit-check
+      # action: that action needs issues:write/checks:write to post results back via the GitHub
+      # API, which the repo's own default Actions permission setting can cap regardless of what
+      # this workflow requests ("Resource not accessible by integration") - a plain CLI run
+      # avoids needing any elevated permissions at all. Exit code alone gates the job: cargo
+      # audit's default policy only fails on an actual vulnerability, not an "unmaintained crate"
+      # notice.
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
