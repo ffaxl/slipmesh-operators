@@ -27,10 +27,11 @@ pub struct RtClient {
     /// `Mutex` rather than a retry loop: sidesteps picking a retry budget that's merely "probably
     /// enough" under some untested concurrency level.
     ///
-    /// A handful of methods call another method internally (`ensure_link` calls `link_index`,
-    /// `default_iface` calls `list_links`) - those internal calls go through a private `_inner`
-    /// helper that skips the lock, since `tokio::sync::Mutex` isn't reentrant and the outer method
-    /// already holds it for its whole duration.
+    /// A handful of methods internally need the same lookup another public method already does
+    /// (`ensure_link` needs what `link_index` does, `default_iface` needs what `list_links` does) -
+    /// those internal call sites go through a private `link_index_inner`/`list_links_inner` helper
+    /// directly, not the public locked method, since `tokio::sync::Mutex` isn't reentrant and the
+    /// outer method (`ensure_link`/`default_iface`) already holds the lock for its whole duration.
     netlink_lock: Arc<Mutex<()>>,
 }
 
