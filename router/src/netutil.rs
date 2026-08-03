@@ -54,6 +54,13 @@ pub fn collapse(nets: &[Cidr]) -> Vec<Cidr> {
     nets.dedup();
 
     // Drop anything fully contained in a different, larger entry.
+    //
+    // O(n^2): a full scan for each entry. Accepted deliberately rather than reaching for an
+    // interval tree/trie - this only runs when a BypassSource actually (re)resolves (startup,
+    // the refresh interval, or a spec change - see needs_resolve in router/src/reconcile.rs),
+    // never per-reconcile, and even a large RIPEstat geoip country list (low thousands of CIDRs)
+    // is millions of cheap bitwise comparisons - sub-second in practice. Revisit only if a real
+    // BypassSource is observed to make this slow.
     let mut deduped: Vec<Cidr> = Vec::new();
     for &n in &nets {
         if !nets
