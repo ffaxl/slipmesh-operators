@@ -57,6 +57,29 @@ pub fn status_rule_for<K: kube::Resource<DynamicType = ()>>(verbs: &[&str]) -> P
     rule(&group, &[&status], verbs)
 }
 
+/// Same as `rule_for`, but scoped to specific object names via `resourceNames` - narrows the
+/// blast radius when a binary only ever touches a known, fixed set of names of an otherwise
+/// namespace-wide resource (e.g. one hardcoded Secret, not every Secret in the namespace).
+///
+/// Kubernetes' RBAC engine ignores `resourceNames` entirely for `create` (the object doesn't
+/// exist yet at authorization time, so there's nothing to match a name against) - don't pass
+/// `"create"` here, it would look scoped but silently grant unscoped create access anyway; keep
+/// `create` on a separate, deliberately unscoped `rule_for` instead.
+pub fn named_rule_for<K: kube::Resource<DynamicType = ()>>(
+    names: &[&str],
+    verbs: &[&str],
+) -> PolicyRule {
+    assert!(
+        !verbs.contains(&"create"),
+        "named_rule_for: \"create\" can't be scoped by resourceNames (RBAC ignores it for that \
+         verb) - passing it here would silently generate a rule that looks scoped but grants \
+         unscoped create access; put \"create\" on a separate rule_for instead"
+    );
+    let mut r = rule_for::<K>(verbs);
+    r.resource_names = Some(names.iter().map(|s| s.to_string()).collect());
+    r
+}
+
 /// Prints `rules` as a bare YAML sequence - not wrapped in its own `rules:` key, so a chart
 /// template can embed the output directly as the value of a Role/ClusterRole's own `rules:` field.
 pub fn print_rules(rules: &[PolicyRule]) {
@@ -125,5 +148,25 @@ mod tests {
         let status = status_rule_for::<crate::mesh_types::MeshLink>(&["patch"]);
         assert_eq!(status.api_groups, Some(vec!["slipmesh.net".to_string()]));
         assert_eq!(status.resources, Some(vec!["meshlinks/status".to_string()]));
+    }
+
+    #[test]
+    fn named_rule_for_scopes_to_the_given_resource_names() {
+        let r =
+            named_rule_for::<k8s_openapi::api::core::v1::Secret>(&["mesh-keys"], &["get", "patch"]);
+        assert_eq!(r.api_groups, Some(vec![String::new()]));
+        assert_eq!(r.resources, Some(vec!["secrets".to_string()]));
+        assert_eq!(r.resource_names, Some(vec!["mesh-keys".to_string()]));
+        assert_eq!(r.verbs, vec!["get".to_string(), "patch".to_string()]);
+    }
+
+    #[test]
+    #[should_panic(expected = "resourceNames")]
+    fn named_rule_for_rejects_create_since_rbac_ignores_resource_names_for_it() {
+        // Passing "create" here would silently generate a rule that *looks* scoped
+        // (resourceNames is set) but actually grants unscoped create access, since Kubernetes'
+        // RBAC engine ignores resourceNames for create - a footgun worth failing loudly on
+        // instead of leaving to the doc comment alone.
+        named_rule_for::<k8s_openapi::api::core::v1::Secret>(&["mesh-keys"], &["get", "create"]);
     }
 }

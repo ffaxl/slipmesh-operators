@@ -51,13 +51,21 @@ pub struct MeshNodeStatus {
     pub public_key: Option<String>,
 }
 
-// Every field below is `#[schemars(extend("format" = "int32"))]`: schemars otherwise emits
-// `format: "uint16"`/`"uint32"` verbatim from the Rust type name, but the Kubernetes apiserver's
-// OpenAPI validation only recognizes `int32`/`int64` (plus a handful of k8s-specific formats like
-// `cidr`, already used elsewhere in this file) for `type: integer` - an unrecognized format isn't
-// a hard error, just a `Warning:` on every `kubectl apply`/`helm install` against this CRD, from
-// day one of a fresh cluster. Range enforcement doesn't depend on the format string either way -
-// `minimum`/`maximum` (derived separately from each Rust integer type's own bounds) still applies.
+// schemars otherwise emits `format: "uint16"`/`"uint32"` verbatim from the Rust type name, but
+// the Kubernetes apiserver's OpenAPI validation only recognizes `int32`/`int64` (plus a handful
+// of k8s-specific formats like `cidr`, already used elsewhere in this file) for `type: integer` -
+// an unrecognized format isn't a hard error, just a `Warning:` on every `kubectl apply`/
+// `helm install` against this CRD, from day one of a fresh cluster.
+//
+// `u16` fields (jc/jmin/jmax/s1/s2) use `format: int32`: int32's range comfortably covers every
+// u16 value, and schemars already derives the correct `maximum: 65535` on its own from the Rust
+// type, no extra annotation needed.
+//
+// `u32` fields (h1-h4) use `format: int64`, not `int32`: a real u32 (max 4294967295) doesn't fit
+// in int32 (max 2147483647) - a real deployed h1 value (2888360298) already exceeds it. int64 is
+// the OpenAPI-standard format that actually covers every valid u32 value. Also, unlike u16,
+// schemars does *not* auto-derive a `maximum` for u32 - so these get an explicit
+// `#[schemars(range(max = ...))]` too, or the schema would otherwise be silently unbounded above.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
 pub struct Obfuscation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,16 +84,20 @@ pub struct Obfuscation {
     #[schemars(extend("format" = "int32"))]
     pub s2: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("format" = "int32"))]
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(max = 4_294_967_295u32))]
     pub h1: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("format" = "int32"))]
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(max = 4_294_967_295u32))]
     pub h2: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("format" = "int32"))]
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(max = 4_294_967_295u32))]
     pub h3: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("format" = "int32"))]
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(max = 4_294_967_295u32))]
     pub h4: Option<u32>,
 }
 
@@ -100,6 +112,42 @@ impl Obfuscation {
             && self.h2.is_none()
             && self.h3.is_none()
             && self.h4.is_none()
+    }
+}
+
+#[cfg(test)]
+mod obfuscation_schema_tests {
+    use super::*;
+
+    fn field_schema(field: &str) -> serde_json::Value {
+        let schema = schemars::schema_for!(Obfuscation);
+        let value = serde_json::to_value(&schema).unwrap();
+        value["properties"][field].clone()
+    }
+
+    #[test]
+    fn u16_fields_get_int32_with_their_real_max_already_derived() {
+        // No explicit #[schemars(range(...))] needed here - schemars already derives u16's own
+        // bounds (0..=65535) automatically, which fits comfortably inside int32's range.
+        for field in ["jc", "jmin", "jmax", "s1", "s2"] {
+            let schema = field_schema(field);
+            assert_eq!(schema["format"], "int32", "{field} format");
+            assert_eq!(schema["maximum"], 65535, "{field} maximum");
+        }
+    }
+
+    #[test]
+    fn u32_fields_get_int64_with_an_explicit_real_max() {
+        // format: int32 (max ~2.1 billion) understates a real u32's range (max ~4.3 billion) -
+        // a real deployed h1 value (2888360298) already exceeds int32's max. int64 is the
+        // OpenAPI-standard format that actually covers every valid u32 value. schemars doesn't
+        // auto-derive a `maximum` for u32 the way it does for u16 (see the sibling test), so it
+        // needs an explicit #[schemars(range(max = ...))] to avoid being silently unbounded.
+        for field in ["h1", "h2", "h3", "h4"] {
+            let schema = field_schema(field);
+            assert_eq!(schema["format"], "int64", "{field} format");
+            assert_eq!(schema["maximum"], 4_294_967_295u32, "{field} maximum");
+        }
     }
 }
 

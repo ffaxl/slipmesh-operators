@@ -7,14 +7,18 @@
 //! `status_rule_for`), not hand-typed strings - only the verb lists are still asserted by hand.
 
 use common::mesh_types::{MeshLink, MeshNode, MeshPool};
-use common::rbacgen::{rule_for, status_rule_for};
+use common::rbacgen::{named_rule_for, rule_for, status_rule_for};
 use k8s_openapi::api::core::v1::Secret;
+use mesh::MESH_KEYS_SECRET;
 
 fn main() {
     common::rbacgen::print_rules(&[
-        // mesh-keys Secret bootstrap (common::keys::get_or_create_secret_key) - get/create on
-        // first boot, patch to add this node's own entry to an already-existing Secret.
-        rule_for::<Secret>(&["get", "create", "patch"]),
+        // mesh-keys Secret bootstrap (common::keys::get_or_create_secret_key). `create` can't be
+        // scoped by resourceNames - the object doesn't exist yet at authorization time - but
+        // get/patch (against the already-existing Secret) are scoped to this operator's own
+        // hardcoded name, not every Secret in the namespace.
+        rule_for::<Secret>(&["create"]),
+        named_rule_for::<Secret>(&[MESH_KEYS_SECRET], &["get", "patch"]),
         // Read-only: reconciled off an independent reflector (main.rs's spawn_reflector) and the
         // Controller's own MeshNode watch mapper.
         rule_for::<MeshNode>(&["list", "watch"]),
