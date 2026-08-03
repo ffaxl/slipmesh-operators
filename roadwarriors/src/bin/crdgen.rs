@@ -1,5 +1,8 @@
 use kube::CustomResourceExt;
 
 fn main() {
-    common::crdgen::print_all(&[common::mesh_types::RoadWarrior::crd()]);
+    common::crdgen::print_all(&[
+        common::mesh_types::RoadWarrior::crd(),
+        roadwarriors::RoadWarriorConfig::crd(),
+    ]);
 }
