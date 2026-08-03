@@ -69,6 +69,12 @@ pub fn named_rule_for<K: kube::Resource<DynamicType = ()>>(
     names: &[&str],
     verbs: &[&str],
 ) -> PolicyRule {
+    assert!(
+        !verbs.contains(&"create"),
+        "named_rule_for: \"create\" can't be scoped by resourceNames (RBAC ignores it for that \
+         verb) - passing it here would silently generate a rule that looks scoped but grants \
+         unscoped create access; put \"create\" on a separate rule_for instead"
+    );
     let mut r = rule_for::<K>(verbs);
     r.resource_names = Some(names.iter().map(|s| s.to_string()).collect());
     r
@@ -152,5 +158,15 @@ mod tests {
         assert_eq!(r.resources, Some(vec!["secrets".to_string()]));
         assert_eq!(r.resource_names, Some(vec!["mesh-keys".to_string()]));
         assert_eq!(r.verbs, vec!["get".to_string(), "patch".to_string()]);
+    }
+
+    #[test]
+    #[should_panic(expected = "resourceNames")]
+    fn named_rule_for_rejects_create_since_rbac_ignores_resource_names_for_it() {
+        // Passing "create" here would silently generate a rule that *looks* scoped
+        // (resourceNames is set) but actually grants unscoped create access, since Kubernetes'
+        // RBAC engine ignores resourceNames for create - a footgun worth failing loudly on
+        // instead of leaving to the doc comment alone.
+        named_rule_for::<k8s_openapi::api::core::v1::Secret>(&["mesh-keys"], &["get", "create"]);
     }
 }
