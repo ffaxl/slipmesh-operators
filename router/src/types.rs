@@ -148,8 +148,13 @@ pub struct BypassSourceSpec {
 pub struct BypassSourceStatus {
     #[serde(default)]
     pub conditions: Vec<k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition>,
+    // Same reasoning as common::mesh_types::Obfuscation's h1-h4: a real u32 (max 4294967295)
+    // overflows int32 (max 2147483647), so this needs int64 (the OpenAPI-standard format that
+    // actually covers every u32 value) plus an explicit max - schemars doesn't auto-derive one
+    // for u32 the way it does for u16.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("format" = "int32"))]
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(max = 4_294_967_295u32))]
     pub prefix_count: Option<u32>,
     /// Only updated on a *successful* resolve - a failed attempt leaves this (and
     /// `observedGeneration`) untouched, so the next trigger retries without waiting out a full
@@ -161,4 +166,20 @@ pub struct BypassSourceStatus {
     /// after a spec edit until the next successful re-resolve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_generation: Option<i64>,
+}
+
+#[cfg(test)]
+mod bypass_source_status_schema_tests {
+    use super::*;
+
+    #[test]
+    fn prefix_count_gets_int64_with_an_explicit_real_max() {
+        // Same reasoning as common::mesh_types::Obfuscation's h1-h4 (see that test module): a
+        // real u32 doesn't fit in int32, and schemars doesn't auto-derive a `maximum` for u32.
+        let schema = schemars::schema_for!(BypassSourceStatus);
+        let value = serde_json::to_value(&schema).unwrap();
+        let prefix_count = &value["properties"]["prefixCount"];
+        assert_eq!(prefix_count["format"], "int64");
+        assert_eq!(prefix_count["maximum"], 4_294_967_295u32);
+    }
 }
