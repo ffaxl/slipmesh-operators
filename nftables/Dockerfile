@@ -20,7 +20,7 @@
 # Pinned to a specific Alpine release, not `:latest` - a mutable tag makes builds
 # non-reproducible and can silently pick up a breaking/security-relevant change in the base
 # image whenever upstream moves it. Bump deliberately, not automatically.
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache nftables
 ARG TARGETARCH
 COPY target/${TARGETARCH}/release/nftables /usr/bin/nftables
