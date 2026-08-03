@@ -1,0 +1,34 @@
+[package]
+name = "router"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kubernetes operator that manages BIRD BGP routing and bypass resolution for mesh nodes"
+
+[[bin]]
+name = "router"
+path = "src/main.rs"
+
+[[bin]]
+name = "router-crdgen"
+path = "src/bin/crdgen.rs"
+
+[[bin]]
+name = "router-rbacgen"
+path = "src/bin/rbacgen.rs"
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+common.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "fs", "process", "io-util", "net"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true

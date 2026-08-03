@@ -1,0 +1,15 @@
+target/
+**/target/
+# Each Dockerfile packages a pre-built binary from target/<TARGETARCH>/release/ (staged there from
+# the actual cross-compiled rust-triple path - see .github/workflows/release.yml's "Stage binary
+# at its TARGETARCH path" step, or do the equivalent `cp` for a local build) - everything else
+# under target/ is still excluded (build cache, other profiles/targets), just not these final
+# release artifacts.
+!target/amd64/release/mesh
+!target/amd64/release/router
+!target/amd64/release/roadwarriors
+!target/amd64/release/nftables
+!target/arm64/release/mesh
+!target/arm64/release/router
+!target/arm64/release/roadwarriors
+!target/arm64/release/nftables

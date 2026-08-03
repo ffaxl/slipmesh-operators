@@ -1,0 +1,8 @@
+# Clippy linting configuration for operators
+# Only non-default options
+
+# Reconcile handlers and CRD constructors often need more arguments for k8s object fields
+too-many-arguments-threshold = 8
+
+# Reconcile loops with multiple resource kinds/branches may exceed the default threshold
+cognitive-complexity-threshold = 50

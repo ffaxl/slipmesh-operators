@@ -1,0 +1,33 @@
+[package]
+name = "nftables"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kubernetes operator that reconciles nftables NAT rules for private ranges"
+
+[[bin]]
+name = "nftables"
+path = "src/main.rs"
+
+[[bin]]
+name = "nftables-crdgen"
+path = "src/bin/crdgen.rs"
+
+[[bin]]
+name = "nftables-rbacgen"
+path = "src/bin/rbacgen.rs"
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+common.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "process", "io-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
