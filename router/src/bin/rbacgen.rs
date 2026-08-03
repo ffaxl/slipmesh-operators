@@ -23,7 +23,7 @@ use common::mesh_types::{MeshLink, MeshNode, RoadWarrior};
 use common::rbacgen::{print_rules, rule_for, status_rule_for};
 use k8s_openapi::api::core::v1::Node;
 use k8s_openapi::api::networking::v1::ServiceCIDR;
-use types::{BypassSource, RouterNode, RouterPool};
+use types::{BypassSource, RouterConfig, RouterNode, RouterPool};
 
 fn main() {
     println!("# cluster-scoped - ClusterRole");
@@ -50,5 +50,7 @@ fn main() {
         status_rule_for::<BypassSource>(&["patch"]),
         rule_for::<RouterPool>(&["list", "get"]),
         status_rule_for::<RouterPool>(&["update"]),
+        // One-shot at startup, same as ServiceCIDR - see bgp_as_from_configs.
+        rule_for::<RouterConfig>(&["list"]),
     ]);
 }

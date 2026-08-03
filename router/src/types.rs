@@ -84,6 +84,34 @@ pub struct RouterNodeStatus {
     pub loopback: Option<std::net::Ipv4Addr>,
 }
 
+/// Cluster-wide router settings shared identically by every node - unlike `RouterNode` (per-node
+/// identity) or `RouterPool` (multiple instances meaningful, e.g. to add capacity), exactly one
+/// `RouterConfig` object is expected per namespace. No status/reconcile loop: `router` reads this
+/// once at startup (see `main.rs`), the same one-shot-list pattern already used for the cluster's
+/// `ServiceCIDR`/this node's own `podCIDR`.
+#[derive(CustomResource, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[kube(
+    group = "slipmesh.net",
+    version = "v1alpha1",
+    kind = "RouterConfig",
+    plural = "routerconfigs",
+    shortname = "rcfg",
+    namespaced,
+    printcolumn = r#"{"name":"BgpAs", "type":"integer", "jsonPath":".spec.bgpAs"}"#
+)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterConfigSpec {
+    /// AS number shared by the full iBGP mesh - every node's rendered BIRD config uses this same
+    /// value for its local `protocol bgp ibgp_<label> { local as <bgp_as>; ... }` block. Was
+    /// previously the `ROUTER_BGP_AS` env var (default 64512, a private-use AS) - moved to this
+    /// CRD so changing it doesn't require rebuilding/re-templating every node's Deployment spec.
+    /// `min = 1`: AS 0 is reserved/invalid (RFC 7607) - schemars' own derived `minimum` for a u32
+    /// is 0 (a valid u32, just not a valid AS number), so it needs overriding here.
+    #[schemars(extend("format" = "int64"))]
+    #[schemars(range(min = 1, max = 4_294_967_295u32))]
+    pub bgp_as: u32,
+}
+
 /// One bypass-prefix source, resolved into concrete CIDRs by `resolver.rs`: `asn` via
 /// `whois -h whois.radb.net -i origin ASxxxx`, `literal` verbatim, `geoip` via RIPEstat's
 /// country-resource-list.
@@ -181,5 +209,24 @@ mod bypass_source_status_schema_tests {
         let prefix_count = &value["properties"]["prefixCount"];
         assert_eq!(prefix_count["format"], "int64");
         assert_eq!(prefix_count["maximum"], 4_294_967_295u32);
+    }
+}
+
+#[cfg(test)]
+mod router_config_schema_tests {
+    use super::*;
+
+    #[test]
+    fn bgp_as_excludes_zero_a_reserved_invalid_as_number() {
+        // schemars derives minimum: 0 automatically for any u32 field (0 is a valid u32), but AS
+        // 0 is reserved/invalid per RFC 7607 - the schema needs an explicit lower bound of 1 to
+        // actually reject it, rather than only catching it after apiserver admission at Rust
+        // deserialization time in the router binary.
+        let schema = schemars::schema_for!(RouterConfigSpec);
+        let value = serde_json::to_value(&schema).unwrap();
+        let bgp_as = &value["properties"]["bgpAs"];
+        assert_eq!(bgp_as["format"], "int64");
+        assert_eq!(bgp_as["minimum"], 1);
+        assert_eq!(bgp_as["maximum"], 4_294_967_295u32);
     }
 }
