@@ -330,7 +330,7 @@ pub async fn reconcile(link: Arc<MeshLink>, ctx: Arc<Context>) -> Result<Action,
             {
                 let pools_api: Api<MeshPool> = Api::namespaced(ctx.client.clone(), &ctx.namespace);
                 if let Err(e) = common::pool::release(&pools_api, pool_name, &name).await {
-                    tracing::warn!(link = %name, pool = pool_name, error = %e, "failed to release MeshPool slot on delete");
+                    tracing::warn!(link = %name, pool = pool_name, error = %common::reconcile_error::anyhow_chain(&e), "failed to release MeshPool slot on delete");
                 }
             }
 

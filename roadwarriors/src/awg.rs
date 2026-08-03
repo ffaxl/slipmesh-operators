@@ -246,7 +246,7 @@ pub async fn sync_peers(
             let decoded = match decode_key(&public_key) {
                 Ok(k) => k,
                 Err(e) => {
-                    tracing::warn!(public_key, error = %e, "skipping peer with undecodable public_key");
+                    tracing::warn!(public_key, error = %common::reconcile_error::anyhow_chain(&e), "skipping peer with undecodable public_key");
                     return None;
                 }
             };

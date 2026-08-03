@@ -71,7 +71,7 @@ where
             match parse(pool) {
                 Ok(value) => Some(ParsedPool { name, value }),
                 Err(e) => {
-                    tracing::warn!(kind = %kind, pool = %name, error = %e, "invalid pool spec - ignoring this pool");
+                    tracing::warn!(kind = %kind, pool = %name, error = %crate::reconcile_error::anyhow_chain(&e), "invalid pool spec - ignoring this pool");
                     None
                 }
             }

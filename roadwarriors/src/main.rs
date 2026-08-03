@@ -166,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
         .for_each(|res| async move {
             match res {
                 Ok(o) => tracing::debug!(?o, "reconciled"),
-                Err(e) => tracing::warn!(error = %e, "reconcile error"),
+                Err(e) => tracing::warn!(error = %common::reconcile_error::error_chain(&e), "reconcile error"),
             }
         })
         .await;

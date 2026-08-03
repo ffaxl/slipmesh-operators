@@ -32,7 +32,7 @@ where
         let mut stream = std::pin::pin!(stream);
         while let Some(event) = stream.next().await {
             if let Err(e) = event {
-                tracing::warn!(error = %e, "MeshNode watch stream error");
+                tracing::warn!(error = %common::reconcile_error::error_chain(&e), "MeshNode watch stream error");
             }
         }
     });
@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await
                 {
-                    tracing::warn!(error = %e, "periodic gc_stale_interfaces failed");
+                    tracing::warn!(error = %common::reconcile_error::anyhow_chain(&e), "periodic gc_stale_interfaces failed");
                 }
             }
         });
@@ -197,7 +197,9 @@ async fn main() -> anyhow::Result<()> {
     .for_each(|res| async move {
         match res {
             Ok(o) => tracing::debug!(?o, "reconciled"),
-            Err(e) => tracing::warn!(error = %e, "reconcile error"),
+            Err(e) => {
+                tracing::warn!(error = %common::reconcile_error::error_chain(&e), "reconcile error")
+            }
         }
     })
     .await;

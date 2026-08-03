@@ -43,10 +43,12 @@ fn spawn_watch_render<K>(
             match event {
                 Ok(_) => {
                     if let Err(e) = reconcile::render(&ctx).await {
-                        tracing::warn!(error = %e, "render after watch event failed");
+                        tracing::warn!(error = %common::reconcile_error::error_chain(&e), "render after watch event failed");
                     }
                 }
-                Err(e) => tracing::warn!(error = %e, "watch stream error"),
+                Err(e) => {
+                    tracing::warn!(error = %common::reconcile_error::error_chain(&e), "watch stream error")
+                }
             }
         }
     });
@@ -96,7 +98,9 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         match bird_child.wait().await {
             Ok(status) => tracing::error!(%status, "bird daemon exited, crashing pod for restart"),
-            Err(e) => tracing::error!(error = %e, "failed waiting on bird daemon"),
+            Err(e) => {
+                tracing::error!(error = %common::reconcile_error::error_chain(&e), "failed waiting on bird daemon")
+            }
         }
         std::process::exit(1);
     });
@@ -202,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
             .for_each(|res| async move {
                 match res {
                     Ok(o) => tracing::debug!(?o, "reconciled"),
-                    Err(e) => tracing::warn!(error = %e, "reconcile error"),
+                    Err(e) => tracing::warn!(error = %common::reconcile_error::error_chain(&e), "reconcile error"),
                 }
             })
             .await;
@@ -227,7 +231,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         if let Err(e) = bird::force_reconfigure().await {
-            tracing::warn!(error = %e, "startup birdc re-configure nudge failed");
+            tracing::warn!(error = %common::reconcile_error::anyhow_chain(&e), "startup birdc re-configure nudge failed");
         }
     });
 
