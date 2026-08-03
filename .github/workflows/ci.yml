@@ -36,6 +36,13 @@ jobs:
   # checks list, rather than buried in the same log as an unrelated clippy/test failure.
   security:
     runs-on: ubuntu-latest
+    # rustsec/audit-check needs these to create an issue per new advisory and a check run
+    # summarizing the result - scoped to this job only, not the whole workflow's default
+    # `contents: read`, since `check` never needs them.
+    permissions:
+      contents: read
+      issues: write
+      checks: write
     steps:
       - uses: actions/checkout@v4
         with:
