@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────
+# 🦀 Rust source
+*.rs text eol=lf diff=rust
+
+# 📦 Cargo
+Cargo.lock linguist-generated
+Cargo.toml text eol=lf
+
+# 📝 Markdown documentation
+*.md diff=markdown
+README.md linguist-documentation
+
+# ⚙️ Git-cliff config
+cliff.toml linguist-generated
+
+# 🧾 Changelog output
+CHANGELOG.md linguist-generated
+
+# 🧪 Snapshots from insta or similar
+**/__snapshots__/* linguist-generated
+*.snap linguist-generated
+
+# 🏗 Build artifacts
+/target/** linguist-generated
+/pkg/**    linguist-generated
+/build/**  linguist-generated
+/out/**    linguist-generated
+
+# 🚫 Disable diff for binaries and heavy artifacts
+*.rlib -diff
+*.wasm -diff
+*.dSYM/** -diff
+
+# 📄 Common structured text files
+*.json diff=default
+*.toml diff=default
+*.yml  diff=default
+*.yaml diff=default
+
+# 💡 Ensure consistent line endings (LF only)
+*.sh  text eol=lf
+*.rs  text eol=lf
+*.toml text eol=lf
+
+*.lock diff=hidden
