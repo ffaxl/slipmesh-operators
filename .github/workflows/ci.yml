@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -28,3 +31,29 @@ jobs:
 
       - name: build
         run: cargo build --workspace
+
+  # Separate job (not folded into `check`) so a secret/advisory hit is unambiguous in the PR
+  # checks list, rather than buried in the same log as an unrelated clippy/test failure.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans the full commit history by default, not just the working tree - a
+          # shallow checkout would only let it see the single most recent commit.
+          fetch-depth: 0
+
+      # Free for personal-account repos (gitleaks' commercial license only applies to GitHub
+      # Organizations) - see https://github.com/gitleaks/gitleaks-action for the org case.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # RUSTSEC advisory-db check against Cargo.lock - dependency CVEs/unmaintained-crate
+      # warnings, not our own code.
+      - uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
