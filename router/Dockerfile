@@ -15,7 +15,11 @@
 # Can't go FROM scratch like mesh/roadwarriors: `bird`/`birdc` (the actual OSPF/BGP routing
 # daemon - reimplementing that is out of scope) is a real external binary this operator spawns as
 # a subprocess, so the runtime stage needs a real userland to hold it.
-FROM alpine:latest
+#
+# Pinned to a specific Alpine release, not `:latest` - a mutable tag makes builds
+# non-reproducible and can silently pick up a breaking/security-relevant change in the base
+# image whenever upstream moves it. Bump deliberately, not automatically.
+FROM alpine:3.21
 RUN apk add --no-cache bird2 ca-certificates
 
 # Diagnostics only, not used by router itself (it talks netlink directly - see common/netlink):

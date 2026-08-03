@@ -71,12 +71,28 @@ async fn ripestat_get(url: &str) -> Result<serde_json::Value> {
         .context("failed to parse RIPEstat response as JSON")
 }
 
+/// Validates RIPEstat's expected ASN format (`AS` followed by digits, e.g. `"AS15169"`) before
+/// it's spliced into a request URL - a malformed value here isn't just a confusing upstream
+/// error, it's unvalidated CRD input reaching a query string (e.g. `"AS123&foo=bar"` would inject
+/// an extra query parameter into the RIPEstat request).
+fn validate_asn(asn: &str) -> Result<()> {
+    let digits = asn
+        .strip_prefix("AS")
+        .with_context(|| format!("ASN {asn:?} must start with \"AS\""))?;
+    anyhow::ensure!(
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
+        "ASN {asn:?} is not in the expected AS<digits> format"
+    );
+    Ok(())
+}
+
 /// Every IPv4 prefix `asn` (e.g. `"AS15169"`) actually announces, via RIPEstat's
 /// announced-prefixes API - IPv6 entries are dropped (IPv4-only scope). Uses RIPEstat's HTTPS/
 /// JSON API rather than a direct WHOIS query against RADb: WHOIS doesn't handle the concurrent
 /// lookups a multi-ASN BypassSource needs reliably, whereas RIPEstat tolerates concurrency within
 /// its documented 8-per-IP limit (see `RIPESTAT_CONCURRENCY`).
 async fn asn_prefixes(asn: &str) -> Result<Vec<String>> {
+    validate_asn(asn)?;
     let url = format!("https://stat.ripe.net/data/announced-prefixes/data.json?resource={asn}");
     let resp = ripestat_get(&url).await?;
     let prefixes = resp
@@ -91,6 +107,17 @@ async fn asn_prefixes(asn: &str) -> Result<Vec<String>> {
         })
         .unwrap_or_default();
     Ok(prefixes)
+}
+
+/// Validates ISO 3166-1 alpha-2 format (exactly two ASCII letters) before it's spliced into a
+/// request URL - same rationale as `validate_asn`. Returns the normalized (uppercase) code, since
+/// callers may pass either case and RIPEstat's response/label should be consistent either way.
+fn validate_country(country: &str) -> Result<String> {
+    anyhow::ensure!(
+        country.len() == 2 && country.bytes().all(|b| b.is_ascii_alphabetic()),
+        "country {country:?} is not a valid ISO 3166-1 alpha-2 code"
+    );
+    Ok(country.to_ascii_uppercase())
 }
 
 /// Every IPv4 block RIPE NCC has allocated/assigned to `country` (ISO 3166-1 alpha-2), via
@@ -173,6 +200,7 @@ async fn collect_source(source: &BypassSourceEntry) -> Result<Vec<(String, Strin
                 .country
                 .clone()
                 .context("geoip source requires `country`")?;
+            let country = validate_country(&country)?;
             let label = source
                 .label
                 .clone()
@@ -318,4 +346,51 @@ async fn resolve_inner(
     }
     out.sort();
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_asn_accepts_well_formed() {
+        assert!(validate_asn("AS15169").is_ok());
+        assert!(validate_asn("AS1").is_ok());
+    }
+
+    #[test]
+    fn validate_asn_rejects_missing_prefix() {
+        assert!(validate_asn("15169").is_err());
+    }
+
+    #[test]
+    fn validate_asn_rejects_non_digit_suffix() {
+        assert!(validate_asn("AS").is_err());
+        assert!(validate_asn("ASxyz").is_err());
+    }
+
+    #[test]
+    fn validate_asn_rejects_query_string_injection() {
+        // The exact concern this validation closes: an unvalidated ASN reaching the RIPEstat
+        // request URL could inject an extra query parameter.
+        assert!(validate_asn("AS123&foo=bar").is_err());
+    }
+
+    #[test]
+    fn validate_country_accepts_two_letter_codes_either_case() {
+        assert_eq!(validate_country("DE").unwrap(), "DE");
+        assert_eq!(validate_country("de").unwrap(), "DE");
+    }
+
+    #[test]
+    fn validate_country_rejects_wrong_length() {
+        assert!(validate_country("D").is_err());
+        assert!(validate_country("DEU").is_err());
+    }
+
+    #[test]
+    fn validate_country_rejects_non_alphabetic() {
+        assert!(validate_country("D1").is_err());
+        assert!(validate_country("DE&foo=bar").is_err());
+    }
 }

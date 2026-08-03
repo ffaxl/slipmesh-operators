@@ -1,4 +1,4 @@
-# Rust formatting configuration for generate-ss
+# Rust formatting configuration for slipmesh-operators
 # Only non-default stable options
 
 edition = "2024"
