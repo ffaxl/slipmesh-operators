@@ -10,13 +10,12 @@ use kube::api::{Patch, PatchParams};
 use kube::runtime::reflector::{self, ObjectRef, Store};
 use kube::runtime::{Controller, watcher};
 use kube::{Api, Client, Resource, ResourceExt};
+use mesh::MESH_KEYS_SECRET;
 use serde::de::DeserializeOwned;
 use std::env;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
-
-const MESH_KEYS_SECRET: &str = "mesh-keys";
 
 /// Starts an independent watch on `api`, keeping a local `Store` live-updated for the lifetime of
 /// the process. Used for resource types this operator reads but doesn't own (the Controller's own

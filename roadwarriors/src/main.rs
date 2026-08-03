@@ -8,11 +8,11 @@ use k8s_openapi::api::core::v1::Secret;
 use kube::runtime::Controller;
 use kube::runtime::watcher::Config;
 use kube::{Api, Client, ResourceExt};
+use roadwarriors::ROADWARRIORS_KEY_SECRET;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const ROADWARRIORS_KEY_SECRET: &str = "roadwarriors-key";
 const ROADWARRIORS_KEY_FIELD: &str = "privateKey";
 
 /// Parses an optional numeric env var, panicking (not silently ignoring) on a value that's set
