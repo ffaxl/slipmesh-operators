@@ -11,10 +11,28 @@ use rtnetlink::{
     AddressMessageBuilder, Handle, LinkMessageBuilder, RouteMessageBuilder, new_connection,
 };
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct RtClient {
     handle: Handle,
+    /// Serializes every netlink request issued through this client - across every clone (shared
+    /// via the `Arc`, not per-clone) and across every method, not just `ensure_address` - confirmed
+    /// by reproduction that concurrent requests sharing one netlink socket (the Controller
+    /// reconciles MeshLinks with unbounded concurrency, all sharing one `RtClient`) can get back
+    /// `EBUSY` from the kernel, even across *different* links and *different* request types (e.g.
+    /// one task's unlocked `ensure_link` racing another's `ensure_address`) - this is contention on
+    /// the shared socket itself, not something scoped to a single link or a single operation. A
+    /// `Mutex` rather than a retry loop: sidesteps picking a retry budget that's merely "probably
+    /// enough" under some untested concurrency level.
+    ///
+    /// A handful of methods internally need the same lookup another public method already does
+    /// (`ensure_link` needs what `link_index` does, `default_iface` needs what `list_links` does) -
+    /// those internal call sites go through a private `link_index_inner`/`list_links_inner` helper
+    /// directly, not the public locked method, since `tokio::sync::Mutex` isn't reentrant and the
+    /// outer method (`ensure_link`/`default_iface`) already holds the lock for its whole duration.
+    netlink_lock: Arc<Mutex<()>>,
 }
 
 /// Shared IPv4 CIDR parse+validate, used by mesh/roadwarriors (interface addressing), nftables
@@ -84,12 +102,13 @@ impl RtClient {
         let (connection, handle, _) =
             new_connection().context("failed to open rtnetlink socket")?;
         tokio::spawn(connection);
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            netlink_lock: Arc::new(Mutex::new(())),
+        })
     }
 
-    /// Looks up a link's ifindex by name, without creating it. `Ok(None)` means the link doesn't
-    /// exist.
-    pub async fn link_index(&self, name: &str) -> Result<Option<u32>> {
+    async fn link_index_inner(&self, name: &str) -> Result<Option<u32>> {
         let mut links = self
             .handle
             .link()
@@ -104,11 +123,19 @@ impl RtClient {
         }
     }
 
+    /// Looks up a link's ifindex by name, without creating it. `Ok(None)` means the link doesn't
+    /// exist.
+    pub async fn link_index(&self, name: &str) -> Result<Option<u32>> {
+        let _guard = self.netlink_lock.lock().await;
+        self.link_index_inner(name).await
+    }
+
     /// Creates the link if it doesn't exist yet (`ip link add <name> type <kind>`). Returns its
     /// ifindex plus whether it was just created, since device identity only needs (re)applying
     /// on creation.
     pub async fn ensure_link(&self, name: &str, kind: &str) -> Result<(u32, bool)> {
-        if let Some(index) = self.link_index(name).await? {
+        let _guard = self.netlink_lock.lock().await;
+        if let Some(index) = self.link_index_inner(name).await? {
             return Ok((index, false));
         }
         let msg = LinkMessageBuilder::<()>::new_with_info_kind(InfoKind::Other(kind.to_string()))
@@ -121,14 +148,13 @@ impl RtClient {
             .await
             .with_context(|| format!("failed to create link {name:?} type {kind:?}"))?;
         let index = self
-            .link_index(name)
+            .link_index_inner(name)
             .await?
             .with_context(|| format!("link {name:?} missing immediately after creation"))?;
         Ok((index, true))
     }
 
-    /// Lists every link on the host as (name, ifindex) pairs - equivalent to `ip -o link show`.
-    pub async fn list_links(&self) -> Result<Vec<(String, u32)>> {
+    async fn list_links_inner(&self) -> Result<Vec<(String, u32)>> {
         use rtnetlink::packet_route::link::LinkAttribute;
         let mut links = self.handle.link().get().execute();
         let mut out = Vec::new();
@@ -144,9 +170,16 @@ impl RtClient {
         Ok(out)
     }
 
+    /// Lists every link on the host as (name, ifindex) pairs - equivalent to `ip -o link show`.
+    pub async fn list_links(&self) -> Result<Vec<(String, u32)>> {
+        let _guard = self.netlink_lock.lock().await;
+        self.list_links_inner().await
+    }
+
     /// Equivalent to `ip link del <index>` - used on graceful shutdown so the interface doesn't
     /// persist in the host netns (it was created there directly via hostNetwork).
     pub async fn delete_link(&self, index: u32) -> Result<()> {
+        let _guard = self.netlink_lock.lock().await;
         self.handle
             .link()
             .del(index)
@@ -157,6 +190,7 @@ impl RtClient {
 
     /// Equivalent to `ip link set <index> up`.
     pub async fn set_up(&self, index: u32) -> Result<()> {
+        let _guard = self.netlink_lock.lock().await;
         let msg = LinkMessageBuilder::<()>::default()
             .index(index)
             .up()
@@ -203,7 +237,15 @@ impl RtClient {
     /// `/31`). `NLM_F_REPLACE` on its own (the old behavior) only updates an exact matching
     /// address or adds a new one; it never removes a now-stale one, so without this an interface
     /// accumulates every address it was ever assigned across its whole lifetime.
+    ///
+    /// Holds `netlink_lock` for the whole list-then-add/delete sequence: reproduced directly
+    /// (many concurrent `ensure_address` calls against a couple of test interfaces) that the
+    /// kernel returns `EBUSY` for this sequence under real concurrency - the Controller reconciles
+    /// MeshLinks with unbounded concurrency, all sharing one `RtClient`/netlink socket, and this
+    /// showed up for *different* links' calls racing each other, not just two calls contending on
+    /// the same one.
     pub async fn ensure_address(&self, index: u32, cidr: &str) -> Result<()> {
+        let _guard = self.netlink_lock.lock().await;
         let desired = parse_cidr(cidr)?;
         let current = self.ipv4_addresses(index).await?;
         for (addr, prefix) in addresses_to_remove(&current, desired) {
@@ -232,6 +274,7 @@ impl RtClient {
 
     /// Equivalent to `ip route replace <cidr> dev <index>`.
     pub async fn route_add(&self, index: u32, cidr: &str) -> Result<()> {
+        let _guard = self.netlink_lock.lock().await;
         let (addr, prefix) = parse_cidr(cidr)?;
         let msg: RouteMessage = RouteMessageBuilder::<Ipv4Addr>::new()
             .destination_prefix(addr, prefix)
@@ -248,6 +291,7 @@ impl RtClient {
 
     /// Equivalent to `ip route del <cidr> dev <index>`. Deleting a missing route is success (ESRCH).
     pub async fn route_del(&self, index: u32, cidr: &str) -> Result<()> {
+        let _guard = self.netlink_lock.lock().await;
         let (addr, prefix) = parse_cidr(cidr)?;
         let msg: RouteMessage = RouteMessageBuilder::<Ipv4Addr>::new()
             .destination_prefix(addr, prefix)
@@ -265,6 +309,7 @@ impl RtClient {
     pub async fn default_iface(&self) -> Result<Option<String>> {
         use rtnetlink::packet_route::route::RouteAttribute;
 
+        let _guard = self.netlink_lock.lock().await;
         let msg = RouteMessageBuilder::<Ipv4Addr>::new().build();
         let mut routes = self.handle.route().get(msg).execute();
         let mut default_oif = None;
@@ -284,7 +329,7 @@ impl RtClient {
             return Ok(None);
         };
 
-        let links = self.list_links().await?;
+        let links = self.list_links_inner().await?;
         Ok(links
             .into_iter()
             .find(|(_, index)| *index == oif)

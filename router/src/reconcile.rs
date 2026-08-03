@@ -265,9 +265,9 @@ async fn current_bypass_routes(
                 // bypass eventually resolves. `ResolveFailed` below is the surfacing mechanism,
                 // not a hard failure of this reconcile.
                 if cache_empty {
-                    tracing::warn!(node = %ctx.node_name, error = %e, "bypass resolution failed with nothing cached yet - serving no bypass routes this pass");
+                    tracing::warn!(node = %ctx.node_name, error = %common::reconcile_error::anyhow_chain(&e), "bypass resolution failed with nothing cached yet - serving no bypass routes this pass");
                 } else {
-                    tracing::warn!(node = %ctx.node_name, error = %e, "bypass resolution failed, keeping last-known-good routes");
+                    tracing::warn!(node = %ctx.node_name, error = %common::reconcile_error::anyhow_chain(&e), "bypass resolution failed, keeping last-known-good routes");
                 }
                 set_bypass_status(
                     &bypasses,
@@ -450,7 +450,7 @@ pub async fn render(ctx: &Context) -> Result<RenderOutcome, Error> {
                 let pools_api: Api<RouterPool> =
                     Api::namespaced(ctx.client.clone(), &ctx.namespace);
                 if let Err(e) = common::pool::release(&pools_api, pool_name, &ctx.node_name).await {
-                    tracing::warn!(node = %ctx.node_name, pool = pool_name, error = %e, "failed to release RouterPool slot on delete");
+                    tracing::warn!(node = %ctx.node_name, pool = pool_name, error = %common::reconcile_error::anyhow_chain(&e), "failed to release RouterPool slot on delete");
                 }
             }
             let patch = json!({ "metadata": { "finalizers": my_router_node.finalizers().iter().filter(|f| *f != ROUTER_POOL_FINALIZER).collect::<Vec<_>>() } });
@@ -588,7 +588,7 @@ pub async fn render(ctx: &Context) -> Result<RenderOutcome, Error> {
         .filter_map(|entry| match common::netlink::rt::parse_cidr(&entry) {
             Ok((addr, prefix)) => Some(format!("{addr}/{prefix}")),
             Err(e) => {
-                tracing::warn!(entry, error = %e, "skipping malformed RoadWarrior allowedIps entry in BIRD learn filter");
+                tracing::warn!(entry, error = %common::reconcile_error::anyhow_chain(&e), "skipping malformed RoadWarrior allowedIps entry in BIRD learn filter");
                 None
             }
         })
@@ -640,7 +640,7 @@ pub async fn bypass_refresh_loop(ctx: Arc<Context>) {
     loop {
         tick.tick().await;
         if let Err(e) = render(&ctx).await {
-            tracing::warn!(error = %e, "hourly bypass refresh failed");
+            tracing::warn!(error = %common::reconcile_error::error_chain(&e), "hourly bypass refresh failed");
         }
     }
 }

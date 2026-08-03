@@ -105,7 +105,7 @@ pub async fn run_forever(mut awg: AwgClient, rt: RtClient, cfg: Config) {
     loop {
         tick.tick().await;
         if let Err(e) = one_pass(&mut awg, &rt, &cfg, &mut installed_routes).await {
-            tracing::warn!(error = %e, "handshake pass failed");
+            tracing::warn!(error = %common::reconcile_error::anyhow_chain(&e), "handshake pass failed");
         }
     }
 }
@@ -186,7 +186,7 @@ async fn one_pass(
                     )
                     .await
                 {
-                    tracing::warn!(error = %e, client = name, "failed to patch RoadWarrior status");
+                    tracing::warn!(error = %common::reconcile_error::error_chain(&e), client = name, "failed to patch RoadWarrior status");
                 }
             }
         }
