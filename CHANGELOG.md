@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 and follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-08-04
+
+### Fixed 🐛
+
+- Replace force_reconfigure's one-shot startup guess with a health watchdog
+- Address Copilot review on the BIRD health watchdog
+
 ## [0.2.0] - 2026-08-04
 
 ### Added ✨
@@ -22,6 +29,10 @@ and follows [Semantic Versioning](https://semver.org/).
 - Scope mesh/roadwarriors' Secret RBAC rule to their own name
 - Assert against passing "create" to named_rule_for
 - Reject AS 0 in RouterConfig's bgp_as schema
+
+### Release
+
+- V0.2.0
 
 ## [0.1.1] - 2026-08-03
 
