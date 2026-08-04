@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.0",
@@ -1297,7 +1297,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mesh"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.0",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "nftables"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "common",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "roadwarriors"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.0",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "router"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "common",

@@ -3,7 +3,7 @@ resolver = "3"
 members = ["mesh", "router", "roadwarriors", "nftables", "common"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Evgeniy Slizevich <evgeniy@slizevich.net>"]
 license = "MIT OR Apache-2.0"
