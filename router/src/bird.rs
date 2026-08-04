@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result};
 use common::netlink::rt::RtClient;
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::net::Ipv4Addr;
 use std::path::Path;
@@ -242,6 +243,9 @@ pub fn render(
     out
 }
 
+/// Name of this operator's rendered OSPF protocol block - see `render()`.
+const OSPF_PROTOCOL: &str = "mesh";
+
 async fn run_birdc_configure() -> Result<()> {
     let output = Command::new("birdc")
         .arg("configure")
@@ -254,6 +258,64 @@ async fn run_birdc_configure() -> Result<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
+}
+
+async fn birdc_show(args: &[&str]) -> Result<String> {
+    let output = Command::new("birdc")
+        .args(args)
+        .output()
+        .await
+        .with_context(|| format!("failed to spawn birdc {}", args.join(" ")))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "birdc {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Verified directly against a real BIRD 2.19.1 (the version this operator's own image ships -
+/// see router/Dockerfile) `strict bind yes` protocol whose local address didn't exist yet at
+/// bind time: `show protocols`' Info column reads exactly `Error: No listening socket`, a
+/// terminal failure state distinct from the normal `Connect`/`Active`/`OpenSent` states a
+/// still-negotiating-but-healthy session passes through - so matching this substring anywhere in
+/// `show protocols` can't false-positive on a peer that's simply not up yet.
+fn has_no_listening_socket(show_protocols_output: &str) -> bool {
+    show_protocols_output.contains("No listening socket")
+}
+
+/// Every interface name BIRD's OSPF instance has actually attached to, per a real
+/// `birdc show ospf interface <proto>` (verified against BIRD 2.19.1): each configured interface
+/// prints as a `Interface <name> (<network>)` line, in a block that's entirely absent (just the
+/// `<proto>:` header) when nothing has been attached yet.
+fn ospf_configured_interfaces(show_ospf_interface_output: &str) -> HashSet<&str> {
+    show_ospf_interface_output
+        .lines()
+        .filter_map(|l| l.strip_prefix("Interface "))
+        .filter_map(|l| l.split_whitespace().next())
+        .collect()
+}
+
+/// True if BIRD's live state (queried fresh via `birdc show ...`, never the rendered config text)
+/// already reflects `ospf_ifaces`: no BGP protocol stuck with "No listening socket", and every
+/// name in `ospf_ifaces` has a working OSPF interface attached. Both are symptoms of the same
+/// interface-notification race `force_reconfigure`'s doc comment describes - a config that
+/// already lists an interface/peer doesn't mean BIRD's interface manager actually caught up to it
+/// yet, and a config-diff-gated `reconcile()` alone can never detect or retry that on its own.
+pub async fn protocols_healthy(ospf_ifaces: &[String]) -> Result<bool> {
+    let protocols = birdc_show(&["show", "protocols"]).await?;
+    if has_no_listening_socket(&protocols) {
+        return Ok(false);
+    }
+    if ospf_ifaces.is_empty() {
+        return Ok(true);
+    }
+    let ospf = birdc_show(&["show", "ospf", "interface", OSPF_PROTOCOL]).await?;
+    let configured = ospf_configured_interfaces(&ospf);
+    Ok(ospf_ifaces
+        .iter()
+        .all(|iface| configured.contains(iface.as_str())))
 }
 
 pub async fn reconcile(
@@ -285,12 +347,14 @@ pub async fn reconcile(
     run_birdc_configure().await
 }
 
-/// One-time startup nudge, unconditional on the config-text diff `reconcile()` uses to skip
-/// redundant reloads: `strict bind yes` BGP protocols can lose a race against the kernel's own
-/// (asynchronous) interface-address-change notification reaching BIRD's interface manager,
-/// landing that protocol in a permanent "No listening socket" state from the first reload. Since
-/// the config text never changes again afterward, `reconcile()`'s diff check would never retry on
-/// its own. Called once, a few seconds after the first startup render (see main.rs).
+/// Unconditional reload, bypassing the config-text diff `reconcile()` uses to skip redundant
+/// reloads: `strict bind yes` BGP protocols and OSPF interfaces can both lose a race against the
+/// kernel's own (asynchronous) interface/address-change notification reaching BIRD's interface
+/// manager, landing in a permanent "No listening socket" / never-attaches state from the first
+/// reload even though the config text already lists them correctly. Since the config text never
+/// changes again afterward, `reconcile()`'s diff check would never retry on its own - called by
+/// `reconcile::bird_health_watchdog` (see main.rs) whenever `protocols_healthy` reports a drift,
+/// not on a fixed startup-only timer.
 pub async fn force_reconfigure() -> Result<()> {
     run_birdc_configure().await
 }
@@ -446,5 +510,66 @@ mod tests {
             "10.244.3.0/24"
         );
         assert_eq!(parsed["plugins"][1]["type"], "loopback");
+    }
+
+    // Fixtures below are real `birdc` output, captured against BIRD 2.19.1 (the exact version
+    // router/Dockerfile ships) running in a container with a deliberately reproduced "strict bind
+    // yes local address not present yet" / "OSPF interface not attached yet" race - not
+    // hand-guessed from memory of BIRD's CLI format (see AGENTS.md's "verify before writing it
+    // down" rule).
+    const SHOW_PROTOCOLS_NO_LISTENING_SOCKET: &str = "\
+BIRD 2.19.1 ready.
+Name       Proto      Table      State  Since         Info
+device1    Device     ---        up     22:24:15.259
+ospf1      OSPF       master4    up     22:24:15.259  Alone
+ibgp_test  BGP        ---        down   22:24:15.266  Error: No listening socket
+";
+
+    const SHOW_PROTOCOLS_HEALTHY: &str = "\
+BIRD 2.19.1 ready.
+Name       Proto      Table      State  Since         Info
+device1    Device     ---        up     22:30:37.362
+mesh       OSPF       master4    up     22:30:37.362  Alone
+ibgp_test  BGP        ---        start  22:31:14.133  Connect
+";
+
+    const SHOW_OSPF_INTERFACE_NONE_CONFIGURED: &str = "BIRD 2.19.1 ready.\nmesh:\n";
+
+    const SHOW_OSPF_INTERFACE_TWO_CONFIGURED: &str = "\
+BIRD 2.19.1 ready.
+mesh:
+Interface lo (10.0.0.1/32)
+\tType: nbma
+\tArea: 0.0.0.0 (0)
+\tState: Waiting (stub)
+Interface mesh-a (10.99.0.0/31)
+\tType: ptp
+\tArea: 0.0.0.0 (0)
+\tState: PtP (stub)
+Interface mesh-b (10.99.0.2/31)
+\tType: ptp
+\tArea: 0.0.0.0 (0)
+\tState: PtP (stub)
+";
+
+    #[test]
+    fn detects_no_listening_socket() {
+        assert!(has_no_listening_socket(SHOW_PROTOCOLS_NO_LISTENING_SOCKET));
+    }
+
+    #[test]
+    fn healthy_protocols_have_no_listening_socket_error() {
+        assert!(!has_no_listening_socket(SHOW_PROTOCOLS_HEALTHY));
+    }
+
+    #[test]
+    fn parses_configured_ospf_interfaces() {
+        let configured = ospf_configured_interfaces(SHOW_OSPF_INTERFACE_TWO_CONFIGURED);
+        assert_eq!(configured, HashSet::from(["lo", "mesh-a", "mesh-b"]));
+    }
+
+    #[test]
+    fn no_configured_ospf_interfaces_parses_as_empty() {
+        assert!(ospf_configured_interfaces(SHOW_OSPF_INTERFACE_NONE_CONFIGURED).is_empty());
     }
 }
