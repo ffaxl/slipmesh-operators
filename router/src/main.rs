@@ -1,11 +1,7 @@
 mod bird;
-mod netutil;
 mod reconcile;
-mod resolver;
-mod types;
 
 use anyhow::Context as _;
-use common::mesh_types::{MeshLink, MeshNode, RoadWarrior};
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Node;
 use k8s_openapi::api::networking::v1::ServiceCIDR;
@@ -13,6 +9,8 @@ use kube::runtime::reflector;
 use kube::runtime::{Controller, watcher};
 use kube::{Api, Client, Resource};
 use serde::de::DeserializeOwned;
+use slipmesh_core::mesh_types::{MeshLink, MeshNode, RoadWarrior};
+use slipmesh_core::router_types::{BypassSource, RouterConfig, RouterNode, bgp_as_from_configs};
 use std::collections::HashMap;
 use std::env;
 use std::fmt::Debug;
@@ -21,26 +19,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use types::{BypassSource, RouterConfig, RouterNode};
-
-/// Extracts the single cluster-wide BGP AS number from every `RouterConfig` object in the
-/// namespace. Exactly one is expected: zero means nothing has been configured yet (fail loudly at
-/// startup rather than silently falling back to some baked-in default - a typo'd/missing config
-/// should be obvious, not silently wrong for the whole mesh); more than one is ambiguous, since
-/// nothing here decides which one's value every node should actually use.
-fn bgp_as_from_configs(configs: &[RouterConfig]) -> anyhow::Result<u32> {
-    match configs {
-        [] => anyhow::bail!(
-            "no RouterConfig object found - exactly one is required (e.g. spec.bgpAs: 64512)"
-        ),
-        [only] => Ok(only.spec.bgp_as),
-        _ => anyhow::bail!(
-            "expected exactly one RouterConfig object, found {} - ambiguous, don't know which \
-             one's bgpAs the whole mesh should use",
-            configs.len()
-        ),
-    }
-}
 
 /// Watches `api` in the background for the lifetime of the process, both keeping `writer`'s
 /// `Store` live-updated *and* calling `render(&ctx)` on every event - independent of the
@@ -162,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
     };
     // Picks the first *IPv4* entry, not just the first entry - a dual-stack cluster's ServiceCIDR
     // can list an IPv6 CIDR first, and this whole stack (OSPF/iBGP/BIRD config below) is IPv4-only.
-    // Validated as a real aligned network CIDR now (`common::netlink::rt::parse_network_cidr`,
+    // Validated as a real aligned network CIDR now (`slipmesh_core::cidr::parse_network_cidr`,
     // the same check every other pool/network field in this codebase goes through) rather than
     // trusting the string as-is - it gets spliced directly into rendered BIRD config
     // (`AnnounceRoute`/`bird::render`'s `ANNOUNCE` block) with no further validation there, so a
@@ -173,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.cidrs)
         .into_iter()
         .flatten()
-        .find(|c| common::netlink::rt::parse_network_cidr(c).is_ok())
+        .find(|c| slipmesh_core::cidr::parse_network_cidr(c).is_ok())
         .context("ServiceCIDR object has no valid IPv4 CIDR set (this stack is IPv4-only)")?;
     let announce_routes = vec![bird::AnnounceRoute {
         net: service_cidr_net.clone(),
@@ -269,29 +247,4 @@ async fn main() -> anyhow::Result<()> {
         .context("router Controller task panicked")?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod bgp_as_from_configs_tests {
-    use super::*;
-    use types::RouterConfigSpec;
-
-    fn config(bgp_as: u32) -> RouterConfig {
-        RouterConfig::new("cluster", RouterConfigSpec { bgp_as })
-    }
-
-    #[test]
-    fn no_configs_is_an_error() {
-        assert!(bgp_as_from_configs(&[]).is_err());
-    }
-
-    #[test]
-    fn exactly_one_config_returns_its_bgp_as() {
-        assert_eq!(bgp_as_from_configs(&[config(65010)]).unwrap(), 65010);
-    }
-
-    #[test]
-    fn more_than_one_config_is_ambiguous_and_an_error() {
-        assert!(bgp_as_from_configs(&[config(65010), config(65020)]).is_err());
-    }
 }

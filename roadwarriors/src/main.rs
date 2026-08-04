@@ -3,13 +3,14 @@ mod handshake;
 mod reconcile;
 
 use anyhow::Context as _;
-use common::mesh_types::RoadWarrior;
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Secret;
 use kube::runtime::Controller;
 use kube::runtime::watcher::Config;
 use kube::{Api, Client, ResourceExt};
-use roadwarriors::{ROADWARRIORS_KEY_SECRET, RoadWarriorConfig};
+use roadwarriors::ROADWARRIORS_KEY_SECRET;
+use slipmesh_core::mesh_types::RoadWarrior;
+use slipmesh_core::roadwarrior_types::RoadWarriorConfig;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,10 +20,10 @@ const ROADWARRIORS_KEY_FIELD: &str = "privateKey";
 /// Reads the shared `roadwarriors` interface's private key from a Secret - identical across every
 /// node (unlike mesh's per-node keys), so every DaemonSet pod reads/writes the same single entry.
 /// Generates one on first boot; races with every other pod on the initial `Secret::create` - see
-/// `common::keys::get_or_create_secret_key`.
+/// `slipmesh_core::keys::get_or_create_secret_key`.
 async fn shared_private_key(client: &Client, namespace: &str) -> anyhow::Result<[u8; 32]> {
     let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
-    common::keys::get_or_create_secret_key(
+    slipmesh_core::keys::get_or_create_secret_key(
         &secrets,
         namespace,
         ROADWARRIORS_KEY_SECRET,
@@ -73,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     // is a valid, meaningful state, keeping the interface wire-compatible with ordinary WireGuard
     // clients - see `obfuscation_from_configs`.
     let roadwarriorconfigs: Api<RoadWarriorConfig> = Api::namespaced(client.clone(), &namespace);
-    let obfuscation = roadwarriors::obfuscation_from_configs(
+    let obfuscation = slipmesh_core::roadwarrior_types::obfuscation_from_configs(
         &roadwarriorconfigs
             .list(&Default::default())
             .await

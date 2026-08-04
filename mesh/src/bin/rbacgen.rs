@@ -1,19 +1,19 @@
 //! Prints the exact `rules:` this operator's binary needs - see `common::rbacgen`'s module doc.
 //! Audited directly against `main.rs`/`reconcile.rs`'s own `Api<T>` calls (including
-//! `common::keys::get_or_create_secret_key` for the `secrets` rule and `common::pool::allocate`/
-//! `release` for the `meshpools`/`meshpools/status` rules - the latter goes through
+//! `slipmesh_core::keys::get_or_create_secret_key` for the `secrets` rule and
+//! `slipmesh_core::pool::allocate`/`release` for the `meshpools`/`meshpools/status` rules - the latter goes through
 //! `replace_status`, i.e. HTTP PUT, which Kubernetes maps to the `update` verb, not `patch`).
 //! Resource names/apiGroups come from each type's own `kube::Resource` impl (`rule_for`/
 //! `status_rule_for`), not hand-typed strings - only the verb lists are still asserted by hand.
 
-use common::mesh_types::{MeshLink, MeshNode, MeshPool};
 use common::rbacgen::{named_rule_for, rule_for, status_rule_for};
 use k8s_openapi::api::core::v1::Secret;
 use mesh::MESH_KEYS_SECRET;
+use slipmesh_core::mesh_types::{MeshLink, MeshNode, MeshPool};
 
 fn main() {
     common::rbacgen::print_rules(&[
-        // mesh-keys Secret bootstrap (common::keys::get_or_create_secret_key). `create` can't be
+        // mesh-keys Secret bootstrap (slipmesh_core::keys::get_or_create_secret_key). `create` can't be
         // scoped by resourceNames - the object doesn't exist yet at authorization time - but
         // get/patch (against the already-existing Secret) are scoped to this operator's own
         // hardcoded name, not every Secret in the namespace.

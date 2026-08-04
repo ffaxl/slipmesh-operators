@@ -237,7 +237,6 @@ dependencies = [
  "base64 0.23.0",
  "futures",
  "genetlink",
- "getrandom 0.4.3",
  "k8s-openapi",
  "kube",
  "netlink-packet-amnezia-wireguard",
@@ -245,14 +244,11 @@ dependencies = [
  "netlink-packet-generic",
  "netlink-packet-route 0.31.0",
  "rtnetlink",
- "schemars",
- "serde",
- "serde_json",
  "serde_yaml",
+ "slipmesh-core",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -1313,6 +1309,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "slipmesh-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1429,6 +1426,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "slipmesh-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1876,6 +1874,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "slipmesh-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1894,6 +1893,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "slipmesh-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2249,6 +2249,26 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "slipmesh-core"
+version = "0.1.0"
+source = "git+https://github.com/slipmesh/core?rev=dd6673c74ae6c1d3eed71671c3789871300f8199#dd6673c74ae6c1d3eed71671c3789871300f8199"
+dependencies = [
+ "anyhow",
+ "base64 0.23.0",
+ "futures",
+ "getrandom 0.4.3",
+ "k8s-openapi",
+ "kube",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "x25519-dalek",
+]
 
 [[package]]
 name = "smallvec"

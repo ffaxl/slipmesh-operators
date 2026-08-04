@@ -134,18 +134,18 @@ mod tests {
     fn resource_for_crd_matches_its_own_kube_macro_metadata() {
         // MeshNode's #[kube(group = "slipmesh.net", plural = "meshnodes", ...)] - the exact same
         // metadata crdgen's MeshNode::crd() renders into the CRD's spec.group/spec.names.plural.
-        let (group, plural) = resource::<crate::mesh_types::MeshNode>();
+        let (group, plural) = resource::<slipmesh_core::mesh_types::MeshNode>();
         assert_eq!(group, "slipmesh.net");
         assert_eq!(plural, "meshnodes");
     }
 
     #[test]
     fn rule_for_and_status_rule_for_derive_the_right_strings() {
-        let base = rule_for::<crate::mesh_types::MeshLink>(&["list", "watch"]);
+        let base = rule_for::<slipmesh_core::mesh_types::MeshLink>(&["list", "watch"]);
         assert_eq!(base.api_groups, Some(vec!["slipmesh.net".to_string()]));
         assert_eq!(base.resources, Some(vec!["meshlinks".to_string()]));
 
-        let status = status_rule_for::<crate::mesh_types::MeshLink>(&["patch"]);
+        let status = status_rule_for::<slipmesh_core::mesh_types::MeshLink>(&["patch"]);
         assert_eq!(status.api_groups, Some(vec!["slipmesh.net".to_string()]));
         assert_eq!(status.resources, Some(vec!["meshlinks/status".to_string()]));
     }

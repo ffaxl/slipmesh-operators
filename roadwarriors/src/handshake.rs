@@ -6,7 +6,6 @@
 
 use anyhow::Result;
 use base64::Engine;
-use common::mesh_types::RoadWarrior;
 use common::netlink::awg::AwgClient;
 use common::netlink::rt::RtClient;
 use kube::api::{Patch, PatchParams};
@@ -16,6 +15,7 @@ use netlink_packet_amnezia_wireguard::{
     AmneziaWireguardAllowedIpAttr, AmneziaWireguardAttribute, AmneziaWireguardPeerAttribute,
 };
 use serde_json::json;
+use slipmesh_core::mesh_types::RoadWarrior;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::interval;
@@ -149,7 +149,7 @@ async fn one_pass(
                 // skipped rather than propagated via `?`, which would abort this whole tick and
                 // starve every other peer's route (re)install/cleanup and status patch below, one
                 // second at a time, for as long as that peer stays connected.
-                if common::netlink::rt::parse_cidr(net).is_err() {
+                if slipmesh_core::cidr::parse_cidr(net).is_err() {
                     tracing::warn!(
                         net,
                         peer = peer.public_key_b64,

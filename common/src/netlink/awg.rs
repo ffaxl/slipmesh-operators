@@ -5,7 +5,6 @@
 //! `GetDevice`/`SetDevice` netlink transport. Interface/address/route management is `rt.rs`
 //! (a different netlink family).
 
-use crate::mesh_types::Obfuscation;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use genetlink::GenetlinkHandle;
@@ -14,18 +13,7 @@ use netlink_packet_amnezia_wireguard::{
 };
 use netlink_packet_core::{NLM_F_ACK, NLM_F_DUMP, NLM_F_REQUEST, NetlinkMessage, NetlinkPayload};
 use netlink_packet_generic::GenlMessage;
-
-/// Decodes a base64-encoded AmneziaWG key (private or public - the wire format doesn't
-/// distinguish) into the raw 32 bytes `AmneziaWireguardAttribute::PrivateKey`/`PublicKey` expect.
-pub fn decode_key(b64: &str) -> Result<[u8; 32]> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .context("invalid base64 key")?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("key is not 32 bytes"))
-}
+use slipmesh_core::mesh_types::Obfuscation;
 
 /// Appends the device-level attributes for whichever of `Obfuscation`'s nine fields are set -
 /// omitted fields are left unmentioned (not sent as zero/default), matching AmneziaWG's own

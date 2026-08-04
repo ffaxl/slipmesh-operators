@@ -2,7 +2,7 @@ use kube::CustomResourceExt;
 
 fn main() {
     common::crdgen::print_all(&[
-        common::mesh_types::RoadWarrior::crd(),
-        roadwarriors::RoadWarriorConfig::crd(),
+        slipmesh_core::mesh_types::RoadWarrior::crd(),
+        slipmesh_core::roadwarrior_types::RoadWarriorConfig::crd(),
     ]);
 }

@@ -11,6 +11,9 @@ repository = "https://github.com/ffaxl/slipmesh-operators"
 
 [workspace.dependencies]
 common = { path = "common" }
+# Pinned to a specific rev, not a branch - reproducible builds, bumped deliberately like any other
+# dependency version (see AGENTS.md's "verify current versions before changes" rule).
+slipmesh-core = { git = "https://github.com/slipmesh/core", rev = "dd6673c74ae6c1d3eed71671c3789871300f8199" }
 
 anyhow = "1.0.104"
 base64 = "0.23.0"

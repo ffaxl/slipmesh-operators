@@ -1,9 +1,9 @@
 use crate::nftables;
-use crate::types::NatPrivateRange;
 use common::netlink::rt::RtClient;
 pub use common::reconcile_error::{Error, error_policy};
 use kube::runtime::controller::Action;
 use kube::runtime::reflector::Store;
+use slipmesh_core::nftables_types::NatPrivateRange;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;

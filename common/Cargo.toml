@@ -19,15 +19,8 @@ netlink-packet-core.workspace = true
 netlink-packet-generic.workspace = true
 netlink-packet-route.workspace = true
 rtnetlink.workspace = true
-schemars.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 serde_yaml.workspace = true
+slipmesh-core.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing.workspace = true
-# Only used for two mechanical wire-format operations, never protocol logic of our own: deriving
-# a public key from an already-existing private key (X25519 scalar mult, `public = private *
-# basepoint`) and generating a fresh private key on first boot.
-x25519-dalek = { version = "3.0.0", default-features = false, features = ["static_secrets", "getrandom"] }
-getrandom = { version = "0.4.3", features = ["sys_rng"] }

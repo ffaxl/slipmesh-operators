@@ -1,15 +1,14 @@
 mod nftables;
 mod reconcile;
-mod types;
 
 use futures::StreamExt;
 use kube::runtime::Controller;
 use kube::runtime::watcher::Config;
 use kube::{Api, Client};
+use slipmesh_core::nftables_types::NatPrivateRange;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use types::NatPrivateRange;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

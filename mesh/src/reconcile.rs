@@ -1,5 +1,4 @@
-use crate::{awg, mesh_math};
-use common::mesh_types::{MeshLink, MeshNode, MeshPool};
+use crate::awg;
 use common::netlink::awg::AwgClient;
 use common::netlink::rt::RtClient;
 pub use common::reconcile_error::{Error, error_policy};
@@ -8,6 +7,7 @@ use kube::runtime::controller::Action;
 use kube::runtime::reflector::{ObjectRef, Store};
 use kube::{Api, Client, Resource, ResourceExt};
 use serde_json::json;
+use slipmesh_core::mesh_types::{MeshLink, MeshNode, MeshPool};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,7 +51,7 @@ async fn set_condition(
         .status
         .as_ref()
         .map_or(&[][..], |s| s.conditions.as_slice());
-    let cond = common::reconcile_error::condition(
+    let cond = slipmesh_core::condition(
         existing,
         type_,
         status,
@@ -83,7 +83,7 @@ async fn set_mesh_node_condition(
         .status
         .as_ref()
         .map_or(&[][..], |s| s.conditions.as_slice());
-    let cond = common::reconcile_error::condition(
+    let cond = slipmesh_core::condition(
         existing,
         type_,
         status,
@@ -165,7 +165,7 @@ fn link_port(
     link: &MeshLink,
     me: &str,
 ) -> Result<u16, Error> {
-    Ok(mesh_math::addressing_for(
+    Ok(slipmesh_core::mesh_math::addressing_for(
         network,
         prefix_len,
         base_port,
@@ -186,9 +186,9 @@ struct MeshPoolInfo {
 
 async fn valid_pools(
     pools_api: &Api<MeshPool>,
-) -> Result<Vec<common::pool::ParsedPool<MeshPoolInfo>>, Error> {
-    Ok(common::pool::valid_pools(pools_api, |p| {
-        let (network, prefix_len) = common::netlink::rt::parse_network_cidr(&p.spec.network)?;
+) -> Result<Vec<slipmesh_core::pool::ParsedPool<MeshPoolInfo>>, Error> {
+    Ok(slipmesh_core::pool::valid_pools(pools_api, |p| {
+        let (network, prefix_len) = slipmesh_core::cidr::parse_network_cidr(&p.spec.network)?;
         Ok(MeshPoolInfo {
             network,
             prefix_len,
@@ -200,7 +200,7 @@ async fn valid_pools(
 
 /// Called by the "lower" node of a link once `link.status.network` is empty (see
 /// `MeshLinkSpec::is_lower`). Tries `link.spec.network` (a pin) first, else walks every
-/// `MeshPool` in name order via `common::pool::allocate`. On success, patches this MeshLink's status with
+/// `MeshPool` in name order via `slipmesh_core::pool::allocate`. On success, patches this MeshLink's status with
 /// the resolved pool/network/port and returns `Ok(true)`. On a structural problem (pin out of
 /// range, pin conflict, pools exhausted) sets a status condition and returns `Ok(false)` - not a
 /// hard reconcile error, the caller retries with a bounded delay.
@@ -214,7 +214,7 @@ async fn allocate_link_addressing(
     let pools = valid_pools(&pools_api).await?;
 
     if let Some(pinned) = &link.spec.network {
-        let (pinned_addr, prefix) = common::netlink::rt::parse_cidr(pinned)?;
+        let (pinned_addr, prefix) = slipmesh_core::cidr::parse_cidr(pinned)?;
         if prefix != 31 {
             let msg = format!("pinned network {pinned:?} is not a /31");
             tracing::warn!(link = %name, "{msg}");
@@ -222,7 +222,7 @@ async fn allocate_link_addressing(
             return Ok(false);
         }
         let Some(pool) = pools.iter().find(|p| {
-            common::netlink::rt::cidr_contains(p.value.network, p.value.prefix_len, pinned_addr)
+            slipmesh_core::cidr::cidr_contains(p.value.network, p.value.prefix_len, pinned_addr)
         }) else {
             let msg = format!("no MeshPool configured contains pinned network {pinned:?}");
             tracing::warn!(link = %name, "{msg}");
@@ -231,7 +231,8 @@ async fn allocate_link_addressing(
         };
         // `cidr_contains` only proves the pin is inside the pool's range, not aligned to a /31
         // boundary (e.g. an odd offset). Report misalignment as a config error, not a panic.
-        let Some(index) = mesh_math::index_of(pool.value.network, pinned_addr) else {
+        let Some(index) = slipmesh_core::mesh_math::index_of(pool.value.network, pinned_addr)
+        else {
             let msg = format!(
                 "pinned network {pinned:?} is not aligned to a /31 slot boundary of MeshPool {:?} \
                  ({}) - only even offsets from the pool base are valid slots",
@@ -249,7 +250,7 @@ async fn allocate_link_addressing(
             link,
             &ctx.node_name,
         )?;
-        return match common::pool::allocate(
+        return match slipmesh_core::pool::allocate(
             &pools_api,
             &pool.name,
             name,
@@ -273,14 +274,14 @@ async fn allocate_link_addressing(
     }
 
     for pool in &pools {
-        let candidates = mesh_math::candidate_networks(
+        let candidates = slipmesh_core::mesh_math::candidate_networks(
             pool.value.network,
             pool.value.prefix_len,
             pool.value.base_port,
         )
         .map(|(value, port)| (value, Some(port)));
         if let Some((value, port)) =
-            common::pool::allocate(&pools_api, &pool.name, name, candidates).await?
+            slipmesh_core::pool::allocate(&pools_api, &pool.name, name, candidates).await?
         {
             let port = port.expect("mesh candidates always carry Some(port)");
             patch_link_allocation(meshlink_api, name, &pool.name, &value, port).await?;
@@ -329,7 +330,7 @@ pub async fn reconcile(link: Arc<MeshLink>, ctx: Arc<Context>) -> Result<Action,
                 && let Some(pool_name) = link.status.as_ref().and_then(|s| s.pool.as_deref())
             {
                 let pools_api: Api<MeshPool> = Api::namespaced(ctx.client.clone(), &ctx.namespace);
-                if let Err(e) = common::pool::release(&pools_api, pool_name, &name).await {
+                if let Err(e) = slipmesh_core::pool::release(&pools_api, pool_name, &name).await {
                     tracing::warn!(link = %name, pool = pool_name, error = %common::reconcile_error::anyhow_chain(&e), "failed to release MeshPool slot on delete");
                 }
             }
@@ -466,13 +467,13 @@ pub async fn reconcile(link: Arc<MeshLink>, ctx: Arc<Context>) -> Result<Action,
             false => Ok(Action::requeue(Duration::from_secs(30))), // conflict/exhausted, condition set
         };
     };
-    let (link_network_addr, link_prefix) = common::netlink::rt::parse_cidr(link_network)?;
+    let (link_network_addr, link_prefix) = slipmesh_core::cidr::parse_cidr(link_network)?;
     if link_prefix != 31 {
         return Err(Error::Other(anyhow::anyhow!(
             "MeshLink {name} status.network {link_network} is not a /31"
         )));
     }
-    let local_addr = mesh_math::local_addr(
+    let local_addr = slipmesh_core::mesh_math::local_addr(
         link_network_addr,
         &link.spec.node_a,
         &link.spec.node_b,
