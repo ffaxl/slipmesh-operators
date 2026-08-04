@@ -558,7 +558,7 @@ Interface mesh-b (10.99.0.2/31)
     }
 
     #[test]
-    fn healthy_protocols_have_no_listening_socket_error() {
+    fn no_listening_socket_absent_when_healthy() {
         assert!(!has_no_listening_socket(SHOW_PROTOCOLS_HEALTHY));
     }
 

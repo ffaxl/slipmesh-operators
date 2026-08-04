@@ -638,9 +638,10 @@ pub async fn bypass_refresh_loop(ctx: Arc<Context>) {
     }
 }
 
-/// Runs forever as its own background task, independent of the kube reconcile loop and of
-/// `render()`'s `render_lock` (only reads the already-populated reflector stores in memory, plus
-/// two cheap `birdc show` calls - never touches `bird_conf_path`). Replaces what used to be a
+/// Runs forever as its own background task, independent of the kube reconcile loop. Takes
+/// `ctx.render_lock` for each check - same as `render()` - since a `force_reconfigure` nudge runs
+/// `birdc configure` just like `render()`'s own `bird::reconcile()` does, and the two must not
+/// interleave (see the field doc comment on `Context::render_lock`). Replaces what used to be a
 /// single fixed-delay `force_reconfigure` nudge fired once, 5s after the first startup render:
 /// that one-shot guess wasn't always enough (see issue #4 - a node can end up permanently
 /// OSPF-`Alone`/BGP-`No listening socket` if the underlying interface/address appeared later than
@@ -652,6 +653,7 @@ pub async fn bird_health_watchdog(ctx: Arc<Context>) {
     let mut tick = tokio::time::interval(BIRD_HEALTH_CHECK_INTERVAL);
     loop {
         tick.tick().await;
+        let _render_guard = ctx.render_lock.lock().await;
         let ospf_ifaces = ospf_ifaces_from(
             &ctx.meshlink_store.state(),
             &ctx.mesh_node_store.state(),
