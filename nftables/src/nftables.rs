@@ -14,7 +14,7 @@ use tokio::process::Command;
 /// to `nft -f` - a malformed entry (e.g. containing `}`) could otherwise break out of the
 /// `elements = { ... }` set literal and be interpreted as ruleset syntax.
 fn validate_cidr(s: &str) -> Result<()> {
-    common::netlink::rt::parse_cidr(s).map(|_| ())
+    slipmesh_core::cidr::parse_cidr(s).map(|_| ())
 }
 
 pub async fn apply(iface: &str, nat_private: &[String]) -> Result<()> {

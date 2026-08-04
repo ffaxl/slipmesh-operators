@@ -10,6 +10,7 @@ use rtnetlink::packet_route::route::RouteMessage;
 use rtnetlink::{
     AddressMessageBuilder, Handle, LinkMessageBuilder, RouteMessageBuilder, new_connection,
 };
+use slipmesh_core::cidr::parse_cidr;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,60 +34,6 @@ pub struct RtClient {
     /// directly, not the public locked method, since `tokio::sync::Mutex` isn't reentrant and the
     /// outer method (`ensure_link`/`default_iface`) already holds the lock for its whole duration.
     netlink_lock: Arc<Mutex<()>>,
-}
-
-/// Shared IPv4 CIDR parse+validate, used by mesh/roadwarriors (interface addressing), nftables
-/// (`natPrivate` entry validation), and router (bypass-route CIDR arithmetic).
-pub fn parse_cidr(cidr: &str) -> Result<(Ipv4Addr, u8)> {
-    let (addr, prefix) = cidr
-        .split_once('/')
-        .with_context(|| format!("{cidr:?} is not a CIDR (missing '/')"))?;
-    let addr: Ipv4Addr = addr
-        .parse()
-        .with_context(|| format!("invalid address in {cidr:?}"))?;
-    let prefix: u8 = prefix
-        .parse()
-        .with_context(|| format!("invalid prefix length in {cidr:?}"))?;
-    anyhow::ensure!(
-        prefix <= 32,
-        "invalid prefix length in {cidr:?}: {prefix} > 32"
-    );
-    Ok((addr, prefix))
-}
-
-/// Like `parse_cidr`, but additionally requires `cidr` to be the canonical base address of its
-/// own network (every host bit zero) - e.g. rejects `"10.11.12.13/24"`. Neither Kubernetes'
-/// `format: ipv4`/`format: cidr` CRD validation nor a plain `Ipv4Addr` field type catches this,
-/// so it's checked here. Used for `MeshPool`/`RouterPool` specs, where an unaligned network would
-/// silently corrupt every offset computed from it.
-pub fn parse_network_cidr(cidr: &str) -> Result<(Ipv4Addr, u8)> {
-    let (addr, prefix) = parse_cidr(cidr)?;
-    let host_bits = 32 - u32::from(prefix);
-    let host_mask = (1u64 << host_bits) - 1; // safe: prefix <= 32 guaranteed by parse_cidr above
-    anyhow::ensure!(
-        u64::from(u32::from(addr)) & host_mask == 0,
-        "{cidr:?} is not a network base address ({prefix} host bits must be zero)"
-    );
-    Ok((addr, prefix))
-}
-
-/// Whether `addr` falls inside `network/prefix_len` - shared by mesh (pinned `/31` lookup) and
-/// router (pinned loopback lookup).
-///
-/// Checks range membership only, not alignment to any sub-block boundary (mesh's `/31` slot
-/// allocation checks that separately via `mesh_math::index_of`).
-///
-/// `prefix_len > 32` returns `false` rather than underflowing the shift below.
-pub fn cidr_contains(network: Ipv4Addr, prefix_len: u8, addr: Ipv4Addr) -> bool {
-    let Some(host_bits) = 32u32.checked_sub(u32::from(prefix_len)) else {
-        return false;
-    };
-    let base = u32::from(network);
-    let size: u64 = 1u64 << host_bits;
-    // wrapping_sub before the range check: an address before base wraps to a huge offset, which
-    // then correctly fails the `< size` test.
-    let offset = u64::from(u32::from(addr).wrapping_sub(base));
-    offset < size
 }
 
 /// Which of `current` addresses should be removed so only `desired` remains on the interface -
@@ -342,77 +289,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_network_cidr_accepts_aligned_network() {
-        assert_eq!(
-            parse_network_cidr("172.20.255.0/24").unwrap(),
-            (Ipv4Addr::new(172, 20, 255, 0), 24)
-        );
-    }
-
-    #[test]
-    fn parse_network_cidr_rejects_unaligned_network() {
-        assert!(parse_network_cidr("10.11.12.13/24").is_err());
-    }
-
-    #[test]
-    fn parse_network_cidr_accepts_slash_32() {
-        // No host bits at all - every address is trivially its own network base.
-        assert_eq!(
-            parse_network_cidr("10.11.12.13/32").unwrap(),
-            (Ipv4Addr::new(10, 11, 12, 13), 32)
-        );
-    }
-
-    #[test]
-    fn parse_network_cidr_slash_0_requires_all_zero_address() {
-        assert!(parse_network_cidr("0.0.0.0/0").is_ok());
-        assert!(parse_network_cidr("1.2.3.4/0").is_err());
-    }
-
-    #[test]
-    fn parse_network_cidr_rejects_prefix_over_32() {
-        assert!(parse_network_cidr("10.11.12.0/33").is_err());
-    }
-
-    #[test]
-    fn cidr_contains_accepts_address_inside_range() {
-        assert!(cidr_contains(
-            Ipv4Addr::new(172, 20, 255, 0),
-            24,
-            Ipv4Addr::new(172, 20, 255, 200)
-        ));
-    }
-
-    #[test]
-    fn cidr_contains_rejects_address_outside_range() {
-        assert!(!cidr_contains(
-            Ipv4Addr::new(172, 20, 255, 0),
-            24,
-            Ipv4Addr::new(172, 21, 0, 1)
-        ));
-    }
-
-    #[test]
-    fn cidr_contains_rejects_address_before_base() {
-        assert!(!cidr_contains(
-            Ipv4Addr::new(172, 20, 255, 0),
-            24,
-            Ipv4Addr::new(172, 20, 254, 254)
-        ));
-    }
-
-    #[test]
-    fn cidr_contains_rejects_nonsense_prefix_instead_of_underflowing() {
-        // Would underflow `32 - prefix_len` (panic in debug, masked shift giving a bogus `true`
-        // in release) if not explicitly guarded.
-        assert!(!cidr_contains(
-            Ipv4Addr::new(172, 20, 255, 0),
-            33,
-            Ipv4Addr::new(172, 20, 255, 1)
-        ));
-    }
-
-    #[test]
     fn addresses_to_remove_empty_current_removes_nothing() {
         assert_eq!(
             addresses_to_remove(&[], (Ipv4Addr::new(10, 0, 0, 1), 31)),
@@ -443,16 +319,5 @@ mod tests {
         let mut removed = addresses_to_remove(&[stale_a, desired, stale_b], desired);
         removed.sort();
         assert_eq!(removed, vec![stale_a, stale_b]);
-    }
-
-    #[test]
-    fn cidr_contains_is_range_only_not_alignment() {
-        // Documents the precondition mesh's pinned-/31 path has to check separately: an odd
-        // offset is inside the range but is not a valid /31 slot boundary.
-        assert!(cidr_contains(
-            Ipv4Addr::new(172, 20, 255, 0),
-            24,
-            Ipv4Addr::new(172, 20, 255, 3)
-        ));
     }
 }

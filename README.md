@@ -15,7 +15,8 @@ traffic — all driven by CRDs under the `slipmesh.net` API group.
 | [`router`](router) | operator | Renders BIRD config (OSPF over mesh links, iBGP full mesh) and resolves bypass prefixes |
 | [`roadwarriors`](roadwarriors) | operator | Terminates road-warrior AmneziaWG client connections and maintains their kernel routes |
 | [`nftables`](nftables) | operator | Reconciles nftables NAT/masquerade rules for configured private ranges |
-| [`common`](common) | library | Shared CRD types (`mesh_types`), netlink helpers (`netlink`), pool allocation (`pool`), reconcile plumbing (`reconcile_error`), and key generation (`keys`) - one module per concern |
+| [`common`](common) | library | Linux-specific plumbing shared by the four operator binaries: netlink transport (`netlink`), reconcile/RBAC/CRD-gen helpers (`reconcile_error`, `rbacgen`, `crdgen`) |
+| [slipmesh-core](https://github.com/slipmesh/core) | library (external) | CRD types, pool allocation, key generation, CIDR math, bypass resolution, and desired-state computation - platform-independent, with no dependency on Linux netlink or `kube_runtime::Controller`. Pulled in as a git dependency; see its own README for details |
 
 Each operator binary also ships a `*-crdgen` companion binary that emits its CRD manifest.
 

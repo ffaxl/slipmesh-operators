@@ -1,9 +1,9 @@
 //! Manages the shared `roadwarriors` AmneziaWG interface - identical server key/address/port on
 //! every node; clients pick an entry point purely by which node's endpoint they dial. Obfuscation
-//! (JC/Jmin/Jmax/S1/S2/H1-H4, see `common::mesh_types::Obfuscation`) is a device-level AmneziaWG setting,
-//! not per-peer, so it's one shared config for the whole interface (via `ROADWARRIORS_OBFUSCATION_*`
-//! env vars in main.rs). Unset by default, keeping the interface wire-compatible with ordinary
-//! WireGuard clients.
+//! (JC/Jmin/Jmax/S1/S2/H1-H4, see `slipmesh_core::mesh_types::Obfuscation`) is a device-level
+//! AmneziaWG setting, not per-peer, so it's one shared config for the whole interface (sourced
+//! from a `RoadWarriorConfig` CRD object - see `main.rs`). Unset by default, keeping the
+//! interface wire-compatible with ordinary WireGuard clients.
 //!
 //! Interface creation and addressing go through `rt.rs` (rtnetlink); private key, listen port,
 //! and peer set go over the "amneziawg" genl family via `netlink.rs`. No external binary (`ip`,
@@ -18,12 +18,13 @@
 
 use anyhow::{Context, Result};
 use base64::Engine;
-use common::mesh_types::Obfuscation;
-use common::netlink::awg::{AwgClient, decode_key, push_obfuscation_attrs};
+use common::netlink::awg::{AwgClient, push_obfuscation_attrs};
 use common::netlink::rt::RtClient;
 use netlink_packet_amnezia_wireguard::{
     AmneziaWireguardAttribute, AmneziaWireguardPeer, AmneziaWireguardPeerAttribute,
 };
+use slipmesh_core::keys::decode_key;
+use slipmesh_core::mesh_types::Obfuscation;
 
 /// See amneziawg-linux-kernel-module's uapi/wireguard.h `enum wg_peer_flag`.
 const WGPEER_F_REMOVE_ME: u32 = 1 << 0;

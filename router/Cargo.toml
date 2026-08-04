@@ -29,6 +29,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 common.workspace = true
+slipmesh-core.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "fs", "process", "io-util", "net"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

@@ -1,8 +1,5 @@
 pub mod crdgen;
-pub mod keys;
-pub mod mesh_types;
 pub mod netlink;
-pub mod pool;
 pub mod rbacgen;
 pub mod reconcile_error;
 

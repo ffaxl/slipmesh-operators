@@ -1,8 +1,5 @@
 use kube::CustomResourceExt;
 
-#[path = "../types.rs"]
-mod types;
-
 fn main() {
-    common::crdgen::print_all(&[types::NatPrivateRange::crd()]);
+    common::crdgen::print_all(&[slipmesh_core::nftables_types::NatPrivateRange::crd()]);
 }

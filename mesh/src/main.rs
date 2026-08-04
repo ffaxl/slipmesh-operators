@@ -1,9 +1,7 @@
 mod awg;
-mod mesh_math;
 mod reconcile;
 
 use anyhow::Context as _;
-use common::mesh_types::{MeshLink, MeshNode};
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{Patch, PatchParams};
@@ -12,6 +10,7 @@ use kube::runtime::{Controller, watcher};
 use kube::{Api, Client, Resource, ResourceExt};
 use mesh::MESH_KEYS_SECRET;
 use serde::de::DeserializeOwned;
+use slipmesh_core::mesh_types::{MeshLink, MeshNode};
 use std::env;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -59,14 +58,15 @@ async fn wait_for_own_mesh_node(
 /// Reads this node's private key from the shared `mesh-keys` Secret, keyed by `mesh_label` (not
 /// the Kubernetes Node name - see `MeshNodeSpec::mesh_label`). Generates and persists a fresh key
 /// on first boot; races with every other node's first-boot pod on the initial `Secret::create`,
-/// same as roadwarriors' `shared_private_key` - see `common::keys::get_or_create_secret_key`.
+/// same as roadwarriors' `shared_private_key` - see `slipmesh_core::keys::get_or_create_secret_key`.
 async fn own_private_key(
     client: &Client,
     namespace: &str,
     mesh_label: &str,
 ) -> anyhow::Result<[u8; 32]> {
     let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
-    common::keys::get_or_create_secret_key(&secrets, namespace, MESH_KEYS_SECRET, mesh_label).await
+    slipmesh_core::keys::get_or_create_secret_key(&secrets, namespace, MESH_KEYS_SECRET, mesh_label)
+        .await
 }
 
 #[tokio::main]
@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(private_key)
     };
-    let public_key = common::keys::derive_public_key(private_key);
+    let public_key = slipmesh_core::keys::derive_public_key(private_key);
     meshnodes
         .patch_status(
             &node_name,

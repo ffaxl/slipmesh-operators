@@ -1,7 +1,4 @@
 use crate::bird;
-use crate::resolver;
-use crate::types::{BypassSource, RouterNode, RouterPool};
-use common::mesh_types::{MeshLink, MeshLinkStatus, MeshNode, RoadWarrior};
 use common::netlink::rt::RtClient;
 pub use common::reconcile_error::{Error, error_policy};
 use kube::api::{Patch, PatchParams};
@@ -9,6 +6,11 @@ use kube::runtime::controller::Action;
 use kube::runtime::reflector::{ObjectRef, Store};
 use kube::{Api, Client, Resource, ResourceExt};
 use serde_json::json;
+use slipmesh_core::desired_state::{
+    bgp_peers_from, ospf_ifaces_from, self_and_cluster_endpoints_from,
+};
+use slipmesh_core::mesh_types::{MeshLink, MeshNode, RoadWarrior};
+use slipmesh_core::router_types::{BypassSource, RouterNode, RouterPool};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -108,7 +110,7 @@ async fn set_router_node_status(
         .status
         .as_ref()
         .map_or(&[][..], |s| s.conditions.as_slice());
-    let cond = common::reconcile_error::condition(
+    let cond = slipmesh_core::condition(
         existing,
         "Ready",
         status,
@@ -138,7 +140,7 @@ async fn set_bypass_status(
         .status
         .as_ref()
         .map_or(&[][..], |s| s.conditions.as_slice());
-    let cond = common::reconcile_error::condition(
+    let cond = slipmesh_core::condition(
         existing,
         "Resolved",
         if resolved_ok { "True" } else { "False" },
@@ -232,10 +234,12 @@ async fn current_bypass_routes(
 
     if cache_empty || endpoints_changed || needs_resolve(&bypass, ctx.bypass_refresh_interval) {
         // The self/cluster punch-out is just one more `exclude` entry, resolved the same way as
-        // any other (see `resolver::resolve`).
+        // any other (see `slipmesh_core::resolver::resolve`).
         let mut exclude = bypass.spec.exclude.clone();
-        exclude.push(resolver::self_and_cluster_exclude_entry(endpoints.clone()));
-        match resolver::resolve(&bypass.spec.include, &exclude).await {
+        exclude.push(slipmesh_core::resolver::self_and_cluster_exclude_entry(
+            endpoints.clone(),
+        ));
+        match slipmesh_core::resolver::resolve(&bypass.spec.include, &exclude).await {
             Ok(resolved) => {
                 tracing::info!(node = %ctx.node_name, count = resolved.len(), "bypass sources resolved");
                 set_bypass_status(
@@ -306,7 +310,7 @@ pub enum RenderOutcome {
 }
 
 /// Successive loopback candidates within `network/prefix_len`, in address order - skips `.0`
-/// (not a usable host address). Paired with `None` (no port concept) to match `common::pool::allocate`'s
+/// (not a usable host address). Paired with `None` (no port concept) to match `slipmesh_core::pool::allocate`'s
 /// generic candidate shape.
 fn router_pool_candidates(
     network: Ipv4Addr,
@@ -322,7 +326,7 @@ fn router_pool_candidates(
     })
 }
 
-/// A `RouterPool`'s parsed/validated `spec.network` - see `common::pool::valid_pools`.
+/// A `RouterPool`'s parsed/validated `spec.network` - see `slipmesh_core::pool::valid_pools`.
 struct RouterPoolInfo {
     network: Ipv4Addr,
     prefix_len: u8,
@@ -330,9 +334,9 @@ struct RouterPoolInfo {
 
 async fn valid_pools(
     pools_api: &Api<RouterPool>,
-) -> Result<Vec<common::pool::ParsedPool<RouterPoolInfo>>, Error> {
-    Ok(common::pool::valid_pools(pools_api, |p| {
-        let (network, prefix_len) = common::netlink::rt::parse_network_cidr(&p.spec.network)?;
+) -> Result<Vec<slipmesh_core::pool::ParsedPool<RouterPoolInfo>>, Error> {
+    Ok(slipmesh_core::pool::valid_pools(pools_api, |p| {
+        let (network, prefix_len) = slipmesh_core::cidr::parse_network_cidr(&p.spec.network)?;
         Ok(RouterPoolInfo {
             network,
             prefix_len,
@@ -354,7 +358,7 @@ async fn patch_router_node_loopback(
 }
 
 /// Mirrors `mesh::reconcile::allocate_link_addressing` - tries `node.spec.loopback` (a pin)
-/// first if set, else walks every `RouterPool` in name order via `common::pool::allocate`. On success,
+/// first if set, else walks every `RouterPool` in name order via `slipmesh_core::pool::allocate`. On success,
 /// patches this RouterNode's status and returns `Ok(true)`. On a structural problem sets a status
 /// condition and returns `Ok(false)` - not a hard reconcile error, the caller retries.
 async fn allocate_router_loopback(
@@ -367,14 +371,14 @@ async fn allocate_router_loopback(
 
     if let Some(pinned) = node.spec.loopback {
         let Some(pool) = pools.iter().find(|p| {
-            common::netlink::rt::cidr_contains(p.value.network, p.value.prefix_len, pinned)
+            slipmesh_core::cidr::cidr_contains(p.value.network, p.value.prefix_len, pinned)
         }) else {
             let msg = format!("no RouterPool configured contains pinned loopback {pinned}");
             tracing::warn!(node = %ctx.node_name, "{msg}");
             set_router_node_status(router_nodes, node, "False", "PinOutOfRange", &msg).await?;
             return Ok(false);
         };
-        return match common::pool::allocate(
+        return match slipmesh_core::pool::allocate(
             &pools_api,
             &pool.name,
             &ctx.node_name,
@@ -400,7 +404,8 @@ async fn allocate_router_loopback(
     for pool in &pools {
         let candidates = router_pool_candidates(pool.value.network, pool.value.prefix_len);
         if let Some((value, _)) =
-            common::pool::allocate(&pools_api, &pool.name, &ctx.node_name, candidates).await?
+            slipmesh_core::pool::allocate(&pools_api, &pool.name, &ctx.node_name, candidates)
+                .await?
         {
             let addr: Ipv4Addr = value
                 .parse()
@@ -449,7 +454,9 @@ pub async fn render(ctx: &Context) -> Result<RenderOutcome, Error> {
             {
                 let pools_api: Api<RouterPool> =
                     Api::namespaced(ctx.client.clone(), &ctx.namespace);
-                if let Err(e) = common::pool::release(&pools_api, pool_name, &ctx.node_name).await {
+                if let Err(e) =
+                    slipmesh_core::pool::release(&pools_api, pool_name, &ctx.node_name).await
+                {
                     tracing::warn!(node = %ctx.node_name, pool = pool_name, error = %common::reconcile_error::anyhow_chain(&e), "failed to release RouterPool slot on delete");
                 }
             }
@@ -526,53 +533,32 @@ pub async fn render(ctx: &Context) -> Result<RenderOutcome, Error> {
         return Ok(RenderOutcome::Conflict);
     }
 
-    let bgp_peers: Vec<bird::BgpPeer> = ctx
-        .router_node_store
-        .state()
-        .iter()
-        .filter(|n| n.name_any() != ctx.node_name)
-        .filter_map(|n| {
-            // A peer with no loopback allocated yet isn't ready to be an iBGP peer - skipped,
-            // not an error; shows up on a later render() once its status is populated.
-            let peer_loopback = n.status.as_ref().and_then(|s| s.loopback)?;
-            Some(bird::BgpPeer {
-                label: bird::sanitize_bird_id(&n.spec.router_label),
-                loopback: peer_loopback,
+    // Desired-state computation (which peers, which OSPF interfaces, which endpoints to never
+    // blackhole) is shared, portable logic from slipmesh-core - see its `desired_state` module
+    // doc. BIRD-identifier sanitization stays here: it's specific to BIRD's own syntax
+    // constraints, not something the shared computation should know about.
+    let bgp_peers: Vec<bird::BgpPeer> =
+        bgp_peers_from(&ctx.router_node_store.state(), &ctx.node_name)
+            .into_iter()
+            .map(|p| bird::BgpPeer {
+                label: bird::sanitize_bird_id(&p.router_label),
+                loopback: p.loopback,
             })
-        })
-        .collect();
+            .collect();
 
-    let all_links = ctx.meshlink_store.state();
     // Interface names built from the peer MeshNode's `mesh_label`, not its Kubernetes Node name -
     // must match exactly what mesh created the interface as. A peer whose MeshNode can't be
     // found is skipped with a warning rather than guessed at.
-    let mut ospf_ifaces: Vec<String> = all_links
-        .iter()
-        .filter(|l| l.status.as_ref().is_some_and(MeshLinkStatus::is_ready))
-        .filter_map(|l| {
-            let peer = l.spec.peer_label(&ctx.node_name)?;
-            let Some(peer_node) = ctx
-                .mesh_node_store
-                .get(&ObjectRef::new(peer).within(&ctx.namespace))
-            else {
-                tracing::warn!(link = %l.name_any(), peer, "MeshNode not found, skipping in OSPF interface list");
-                return None;
-            };
-            Some(format!("mesh-{}", peer_node.spec.mesh_label))
-        })
-        .collect();
-    ospf_ifaces.sort();
-    ospf_ifaces.dedup();
+    let ospf_ifaces = ospf_ifaces_from(
+        &ctx.meshlink_store.state(),
+        &ctx.mesh_node_store.state(),
+        &ctx.node_name,
+    );
 
     // Every MeshNode's endpoint (IP or hostname, both resolved via
-    // `resolver::self_and_cluster_exclude_entry`) - self/cluster addresses must never be
-    // blackholed by a bypass.
-    let self_and_cluster_endpoints: Vec<String> = ctx
-        .mesh_node_store
-        .state()
-        .iter()
-        .filter_map(|n| n.spec.endpoint.clone())
-        .collect();
+    // `slipmesh_core::resolver::self_and_cluster_exclude_entry`) - self/cluster addresses must
+    // never be blackholed by a bypass.
+    let self_and_cluster_endpoints = self_and_cluster_endpoints_from(&ctx.mesh_node_store.state());
 
     let bypass_routes = current_bypass_routes(ctx, self_and_cluster_endpoints).await?;
 
@@ -585,7 +571,7 @@ pub async fn render(ctx: &Context) -> Result<RenderOutcome, Error> {
         .state()
         .iter()
         .flat_map(|c| c.spec.allowed_ips.iter().cloned())
-        .filter_map(|entry| match common::netlink::rt::parse_cidr(&entry) {
+        .filter_map(|entry| match slipmesh_core::cidr::parse_cidr(&entry) {
             Ok((addr, prefix)) => Some(format!("{addr}/{prefix}")),
             Err(e) => {
                 tracing::warn!(entry, error = %common::reconcile_error::anyhow_chain(&e), "skipping malformed RoadWarrior allowedIps entry in BIRD learn filter");

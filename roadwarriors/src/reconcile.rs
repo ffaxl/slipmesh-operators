@@ -1,5 +1,4 @@
 use crate::awg;
-use common::mesh_types::RoadWarrior;
 use common::netlink::awg::AwgClient;
 pub use common::reconcile_error::{Error, error_policy};
 use kube::api::{Patch, PatchParams};
@@ -7,6 +6,7 @@ use kube::runtime::controller::Action;
 use kube::runtime::reflector::Store;
 use kube::{Api, Resource, ResourceExt};
 use serde_json::json;
+use slipmesh_core::mesh_types::RoadWarrior;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -39,7 +39,7 @@ async fn set_client_condition(
         .status
         .as_ref()
         .map_or(&[][..], |s| s.conditions.as_slice());
-    let cond = common::reconcile_error::condition(
+    let cond = slipmesh_core::condition(
         existing,
         type_,
         status,
@@ -101,7 +101,7 @@ pub async fn reconcile(client: Arc<RoadWarrior>, ctx: Arc<Context>) -> Result<Ac
         .spec
         .allowed_ips
         .iter()
-        .filter(|net| common::netlink::rt::parse_cidr(net).is_err())
+        .filter(|net| slipmesh_core::cidr::parse_cidr(net).is_err())
         .map(String::as_str)
         .collect();
     if unroutable.is_empty() {

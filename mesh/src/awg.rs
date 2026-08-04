@@ -4,13 +4,14 @@
 //! session, so `ensure_interface` is safe to call unconditionally.
 
 use anyhow::{Context, Result};
-use common::mesh_types::Obfuscation;
-use common::netlink::awg::{AwgClient, decode_key, push_obfuscation_attrs};
+use common::netlink::awg::{AwgClient, push_obfuscation_attrs};
 use common::netlink::rt::RtClient;
 use netlink_packet_amnezia_wireguard::{
     AmneziaWireguardAddressFamily, AmneziaWireguardAllowedIp, AmneziaWireguardAllowedIpAttr,
     AmneziaWireguardAttribute, AmneziaWireguardPeer, AmneziaWireguardPeerAttribute,
 };
+use slipmesh_core::keys::decode_key;
+use slipmesh_core::mesh_types::Obfuscation;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
