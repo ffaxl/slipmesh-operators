@@ -27,6 +27,13 @@ const ROUTER_POOL_FINALIZER: &str = "slipmesh.net/router-pool-release";
 /// doesn't change often enough to justify re-resolving hourly by default.
 pub const DEFAULT_BYPASS_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// How often `bird_health_watchdog` re-checks BIRD's live state - frequent enough that the
+/// interface-notification race (see `bird::force_reconfigure`'s doc comment) gets caught within
+/// seconds of the underlying interface/address actually appearing, cheap enough (two `birdc show`
+/// calls, only escalating to a reload when actually unhealthy) to run forever rather than a
+/// bounded number of startup attempts.
+const BIRD_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+
 pub struct Context {
     pub client: Client,
     pub node_name: String,
@@ -627,6 +634,46 @@ pub async fn bypass_refresh_loop(ctx: Arc<Context>) {
         tick.tick().await;
         if let Err(e) = render(&ctx).await {
             tracing::warn!(error = %common::reconcile_error::error_chain(&e), "hourly bypass refresh failed");
+        }
+    }
+}
+
+/// Runs forever as its own background task, independent of the kube reconcile loop. Takes
+/// `ctx.render_lock` for each check - same as `render()` - since a `force_reconfigure` nudge runs
+/// `birdc configure` just like `render()`'s own `bird::reconcile()` does, and the two must not
+/// interleave (see the field doc comment on `Context::render_lock`). Replaces what used to be a
+/// single fixed-delay `force_reconfigure` nudge fired once, 5s after the first startup render:
+/// that one-shot guess wasn't always enough (see issue #4 - a node can end up permanently
+/// OSPF-`Alone`/BGP-`No listening socket` if the underlying interface/address appeared later than
+/// the guessed delay), and wasn't reacting to BIRD's actual reported state at all (issue #6). This
+/// polls `bird::protocols_healthy` against the OSPF interfaces this node's own state currently
+/// implies, and re-nudges via `force_reconfigure` whenever they've drifted apart - so the fix
+/// applies for the whole process lifetime, not just a narrow startup window.
+pub async fn bird_health_watchdog(ctx: Arc<Context>) {
+    let mut tick = tokio::time::interval(BIRD_HEALTH_CHECK_INTERVAL);
+    loop {
+        tick.tick().await;
+        let _render_guard = ctx.render_lock.lock().await;
+        let ospf_ifaces = ospf_ifaces_from(
+            &ctx.meshlink_store.state(),
+            &ctx.mesh_node_store.state(),
+            &ctx.node_name,
+        );
+        match bird::protocols_healthy(&ospf_ifaces).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    node = %ctx.node_name,
+                    ospf_ifaces = ?ospf_ifaces,
+                    "BIRD hasn't converged to the last-rendered OSPF interfaces/BGP peers, re-nudging"
+                );
+                if let Err(e) = bird::force_reconfigure().await {
+                    tracing::warn!(error = %common::reconcile_error::anyhow_chain(&e), "BIRD health-watchdog re-configure nudge failed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(node = %ctx.node_name, error = %common::reconcile_error::anyhow_chain(&e), "BIRD health check failed")
+            }
         }
     }
 }

@@ -231,14 +231,10 @@ async fn main() -> anyhow::Result<()> {
     // triggered one (render() is a no-op if nothing changed).
     reconcile::render(&ctx).await?;
 
-    // One-time nudge for a startup-only race in bird's own interface-notification timing (see
-    // `bird::force_reconfigure`).
-    tokio::spawn(async {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        if let Err(e) = bird::force_reconfigure().await {
-            tracing::warn!(error = %common::reconcile_error::anyhow_chain(&e), "startup birdc re-configure nudge failed");
-        }
-    });
+    // Ongoing, symptom-driven recovery from bird's own interface-notification race (see
+    // `bird::force_reconfigure`'s doc comment and `reconcile::bird_health_watchdog`) - not just a
+    // one-time startup guess.
+    tokio::spawn(reconcile::bird_health_watchdog(ctx.clone()));
 
     tokio::spawn(reconcile::bypass_refresh_loop(ctx.clone()));
 
